@@ -22,7 +22,7 @@
   ],
   "type": "module",
   "bin": {
-    "saasfunnels": "./dist/saasfunnels.js"
+    "saasfunnels": "dist/saasfunnels.js"
   },
   "engines": {
     "node": ">=22"
@@ -48,11 +48,13 @@
     "typecheck": "tsc --noEmit",
     "security:secrets": "node scripts/check-obvious-secrets.mjs",
     "security:audit": "npm audit --omit=dev --audit-level=high",
+    "verify:metadata": "node scripts/verify-package-metadata.mjs",
     "verify:pack": "node scripts/verify-pack.mjs",
     "verify:installed": "node scripts/smoke-installed-package.mjs",
-    "release:verify": "npm run typecheck && npm test && npm run security:secrets && npm run security:audit && npm run verify:pack && npm run verify:installed"
+    "release:verify": "npm run typecheck && npm test && npm run security:secrets && npm run security:audit && npm run verify:metadata && npm run verify:pack && npm run verify:installed"
   },
   "devDependencies": {
+    "@npmcli/package-json": "7.0.5",
     "@types/node": "^22.18.0",
     "esbuild": "^0.28.1",
     "typescript": "^6.0.3",
