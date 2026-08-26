@@ -1,0 +1,63 @@
+{
+  "name": "saasfunnels",
+  "version": "0.1.0-beta.0",
+  "private": false,
+  "description": "SaaSFunnels CLI and local stdio MCP server",
+  "author": "SaaSFunnels",
+  "homepage": "https://docs.saasfunnels.ai/developer-tools/saasfunnels-cli",
+  "bugs": {
+    "email": "support@saasfunnels.ai",
+    "url": "https://github.com/LeadEngine-ai/saasfunnels-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LeadEngine-ai/saasfunnels-cli.git"
+  },
+  "keywords": [
+    "saas",
+    "funnels",
+    "revenue",
+    "cli",
+    "mcp"
+  ],
+  "type": "module",
+  "bin": {
+    "saasfunnels": "./dist/saasfunnels.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist/saasfunnels.js"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": false,
+    "registry": "https://registry.npmjs.org/",
+    "tag": "beta"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "test": "vitest run",
+    "test:cli": "vitest run tests/cli.test.ts",
+    "test:mcp": "vitest run tests/mcp.test.ts",
+    "typecheck": "tsc --noEmit",
+    "security:secrets": "node scripts/check-obvious-secrets.mjs",
+    "security:audit": "npm audit --omit=dev --audit-level=high",
+    "verify:pack": "node scripts/verify-pack.mjs",
+    "verify:installed": "node scripts/smoke-installed-package.mjs",
+    "release:verify": "npm run typecheck && npm test && npm run security:secrets && npm run security:audit && npm run verify:pack && npm run verify:installed"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  }
+}
