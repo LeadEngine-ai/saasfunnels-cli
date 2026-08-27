@@ -7,7 +7,14 @@ import { spawnSync } from "node:child_process";
 export const expectedPackageFiles = [
   "LICENSE",
   "README.md",
+  "dist/library.js",
   "dist/saasfunnels.js",
+  "dist/types/capabilities.d.ts",
+  "dist/types/feature-setup.d.ts",
+  "dist/types/identity.d.ts",
+  "dist/types/library.d.ts",
+  "dist/types/mcp.d.ts",
+  "dist/types/runtime-contracts.d.ts",
   "package.json",
 ].sort((left, right) => left.localeCompare(right));
 

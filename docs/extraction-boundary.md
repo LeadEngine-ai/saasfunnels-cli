@@ -6,9 +6,12 @@ This repository is a clean, history-free extraction of the public SaaSFunnels CL
 
 - The command dispatcher and local CLI operations: initialization, event validation/samples/test sends, agent handoffs, Feature discovery and manifest generation, diagnostics, readiness, verification, and stdio MCP startup.
 - The local stdio MCP protocol handler, public resources, tool definitions, redaction rules, capability gates, and bounded calls to public developer-tool endpoints.
+- A typed server-side `saasfunnels/library` export of that same MCP registry for the private application's hosted transport adapter. The export contains no hosted authentication, database, UI, deployment, or environment owner.
 - The Feature setup scanner and generated manifest/instrumentation handoff logic.
 - Only the runtime portions of five shared contract areas reachable from the CLI build: developer-tool payload contracts, agent capability boundary metadata, event semantics, signal-family readiness metadata, and Feature instrumentation schema validation.
 - Standalone build, focused tests, deterministic package inspection, installed-package smoke, secret scanning, dependency auditing, and the manual staged-publish workflow.
+
+The CLI executable and library export are built from the same source revision and version. The release verifier installs the exact tarball, imports the library through package exports, and asserts that the hosted registry contains no write tools. The application must pin an exact published prerelease rather than copy or deep-import this source.
 
 The shared runtime contract code in `src/runtime-contracts.ts` was produced from an explicit export allowlist and tree-shaken before extraction. It contains no imports back into the private repository.
 

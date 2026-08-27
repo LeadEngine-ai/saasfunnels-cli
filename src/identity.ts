@@ -1,5 +1,5 @@
 export const SAASFUNNELS_CLI_NAME = "saasfunnels";
-export const SAASFUNNELS_CLI_VERSION = "0.1.0-beta.0";
+export const SAASFUNNELS_CLI_VERSION = "0.1.0-beta.1";
 export const SAASFUNNELS_PRODUCT_NAME = "SaaSFunnels";
 
 // Explicit base URLs keep the same command implementation testable against
@@ -50,4 +50,3 @@ export function saasFunnelsPublicText(value: string) {
     .replaceAll("PrevenueFeatureKey", "SaaSFunnelsFeatureKey")
     .replaceAll("SaaSFunnels", SAASFUNNELS_PRODUCT_NAME);
 }
-

@@ -53,6 +53,23 @@ try {
     throw new Error("Installed saasfunnels verify command did not pass");
   }
 
+  const librarySmoke = run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { hostedSaaSFunnelsMcpToolDefinitions, SAASFUNNELS_CLI_VERSION } from "saasfunnels/library";',
+        "const tools = hostedSaaSFunnelsMcpToolDefinitions();",
+        'if (SAASFUNNELS_CLI_VERSION !== "0.1.0-beta.1") throw new Error("Unexpected library version");',
+        'if (!tools.length || tools.some((tool) => tool.annotations?.readOnlyHint === false)) throw new Error("Unsafe hosted library registry");',
+        'process.stdout.write(JSON.stringify({ library: "passed", tools: tools.length }));',
+      ].join(" "),
+    ],
+    { cwd: consumer },
+  );
+  const library = JSON.parse(librarySmoke);
+
   const child = spawn(executable, ["mcp", "serve"], {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -115,7 +132,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ help: "passed", mcp: "passed", verify: "passed" }, null, 2)}\n`,
+    `${JSON.stringify({ help: "passed", library, mcp: "passed", verify: "passed" }, null, 2)}\n`,
   );
 } finally {
   await rm(workspace, { force: true, recursive: true });

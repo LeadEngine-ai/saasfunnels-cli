@@ -1,6 +1,6 @@
 {
   "name": "saasfunnels",
-  "version": "0.1.0-beta.0",
+  "version": "0.1.0-beta.1",
   "private": false,
   "description": "SaaSFunnels CLI and local stdio MCP server",
   "author": "SaaSFunnels",
@@ -24,18 +24,24 @@
   "bin": {
     "saasfunnels": "dist/saasfunnels.js"
   },
+  "exports": {
+    "./library": {
+      "types": "./dist/types/library.d.ts",
+      "import": "./dist/library.js"
+    }
+  },
   "engines": {
     "node": ">=22"
   },
   "files": [
     "LICENSE",
     "README.md",
-    "dist/saasfunnels.js"
+    "dist"
   ],
   "license": "MIT",
   "publishConfig": {
     "access": "public",
-    "provenance": false,
+    "provenance": true,
     "registry": "https://registry.npmjs.org/",
     "tag": "beta"
   },

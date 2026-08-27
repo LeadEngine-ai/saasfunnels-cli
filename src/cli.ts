@@ -15,15 +15,15 @@ import {
   parseFeatureMappings,
   runFeatureRuntimeCheck,
   runFeatureSetup,
-} from "./feature-setup.ts";
+} from "./feature-setup.js";
 import {
   SAASFUNNELS_CLI_NAME,
   SAASFUNNELS_DEFAULT_API_BASE_URL,
   SAASFUNNELS_ENV,
   SAASFUNNELS_PRODUCT_NAME,
   saasFunnelsPublicText,
-} from "./identity.ts";
-import { serveSaaSFunnelsMcp } from "./mcp.ts";
+} from "./identity.js";
+import { serveSaaSFunnelsMcp } from "./mcp.js";
 
 type CliEnv = Record<string, string | undefined>;
 

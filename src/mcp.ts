@@ -16,15 +16,15 @@ import {
   agentCapabilityAllowedAtBoundary,
   getAgentCapability,
   type AgentCapabilityId,
-} from "./capabilities.ts";
-import { validateFeatureCatalogManifest } from "./feature-setup.ts";
+} from "./capabilities.js";
+import { validateFeatureCatalogManifest } from "./feature-setup.js";
 import {
   SAASFUNNELS_CLI_VERSION,
   SAASFUNNELS_DEFAULT_API_BASE_URL,
   SAASFUNNELS_ENV,
   SAASFUNNELS_PRODUCT_NAME,
   saasFunnelsPublicText,
-} from "./identity.ts";
+} from "./identity.js";
 
 type McpEnv = Record<string, string | undefined>;
 export type SaaSFunnelsMcpJsonObject = Record<string, unknown>;

@@ -2,7 +2,7 @@
 
 import { createInterface } from "node:readline/promises";
 
-import { runSaaSFunnelsCli } from "./cli.ts";
+import { runSaaSFunnelsCli } from "./cli.js";
 
 const argv = process.argv.slice(2);
 const interactiveFeatureSetup =
@@ -28,4 +28,3 @@ try {
 if (result.stdout) process.stdout.write(result.stdout);
 if (result.stderr) process.stderr.write(result.stderr);
 process.exitCode = result.exitCode;
-

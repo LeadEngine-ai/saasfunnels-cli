@@ -28,6 +28,8 @@ Local validation does not require credentials. Live reads use `SAASFUNNELS_API_K
 
 Hosted interactive MCP uses Clerk OAuth at the application `/mcp` URL and does not require this CLI or a copied API key.
 
+The application imports the exact versioned MCP registry through the server-side `saasfunnels/library` export. This keeps hosted Streamable HTTP and local stdio MCP on one package owner; it is not a browser API.
+
 ## Development
 
 ```bash
@@ -35,7 +37,7 @@ npm ci
 npm run release:verify
 ```
 
-The package allowlist is enforced as exactly `LICENSE`, `README.md`, `dist/saasfunnels.js`, and `package.json`.
+The package allowlist is enforced as `LICENSE`, `README.md`, `package.json`, the `saasfunnels` executable bundle, and the typed server-side library bundle/declarations.
 
 Documentation: https://docs.saasfunnels.ai/developer-tools/saasfunnels-cli
 
