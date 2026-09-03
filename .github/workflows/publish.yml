@@ -1,4 +1,4 @@
-name: Stage SaaSFunnels npm prerelease
+name: Stage SaaSFunnels npm release
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
           - verify
           - stage
       confirmation:
-        description: Enter stage-saasfunnels-beta when mode is stage.
+        description: Enter stage-saasfunnels-release when mode is stage.
         required: false
         type: string
 
@@ -21,7 +21,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: saasfunnels-npm-prerelease
+  group: saasfunnels-npm-release
   cancel-in-progress: false
 
 env:
@@ -29,7 +29,7 @@ env:
 
 jobs:
   release-candidate:
-    name: Verify and stage the npm prerelease
+    name: Verify and stage the npm release
     if: github.ref == 'refs/heads/main'
     environment: npm-release
     runs-on: ubuntu-latest
@@ -61,9 +61,9 @@ jobs:
         env:
           RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          test "$RELEASE_CONFIRMATION" = "stage-saasfunnels-beta"
+          test "$RELEASE_CONFIRMATION" = "stage-saasfunnels-release"
           node -e 'const manifest = require("./package.json"); if (manifest.private !== false) throw new Error("The approved release manifest must be publishable"); if (manifest.license !== "MIT") throw new Error("The CLI package must remain MIT licensed")'
 
-      - name: Stage the beta on npm through OIDC
+      - name: Stage the release on npm through OIDC
         if: inputs.mode == 'stage'
-        run: npm stage publish --tag beta --access public
+        run: npm stage publish --tag latest --access public

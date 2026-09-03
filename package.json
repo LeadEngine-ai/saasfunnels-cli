@@ -43,7 +43,7 @@
     "access": "public",
     "provenance": true,
     "registry": "https://registry.npmjs.org/",
-    "tag": "beta"
+    "tag": "latest"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
