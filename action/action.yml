@@ -49,14 +49,19 @@ runs:
           --producer github_action \
           --api-base-url "${{ inputs.api-base-url }}" \
           --send --json > "${RUNNER_TEMP}/drift.json"
-        node -e "
-          const { formatFeatureDriftCheckSummary } = require('saasfunnels/library');
-          const fs = require('fs');
-          const response = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/drift.json', 'utf8'));
-          const check = formatFeatureDriftCheckSummary({
-            drift: response.data?.drift ?? [],
-            rejectedBindings: response.data?.rejectedBindings ?? [],
-          });
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, check.summary + '\n');
+        # The CLI already formatted the summary, so this needs nothing but Node
+        # built-ins. Importing saasfunnels/library here would not resolve: npx
+        # does not install into the workspace, and the package is ESM-only.
+        node -e '
+          const fs = require("fs");
+          const response = JSON.parse(
+            fs.readFileSync(process.env.RUNNER_TEMP + "/drift.json", "utf8"),
+          );
+          const check = response.checkSummary;
+          if (!check) {
+            console.log(response.error || "Feature catalog scan returned no summary.");
+            process.exit(0);
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, check.summary + "\n");
           console.log(check.title);
-        "
+        '

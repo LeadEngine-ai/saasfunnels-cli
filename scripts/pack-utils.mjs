@@ -10,6 +10,7 @@ export const expectedPackageFiles = [
   "dist/library.js",
   "dist/saasfunnels.js",
   "dist/types/capabilities.d.ts",
+  "dist/types/check-summary.d.ts",
   "dist/types/feature-setup.d.ts",
   "dist/types/identity.d.ts",
   "dist/types/library.d.ts",

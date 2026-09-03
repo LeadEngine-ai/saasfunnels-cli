@@ -505,9 +505,11 @@ describe("saasfunnels features setup", () => {
     );
 
     let body: any = null;
-    const fetchImpl = (async (_url: string, init: RequestInit) => {
+    let requestedUrl = "";
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      requestedUrl = String(url);
       body = JSON.parse(init.body as string);
-      return new Response(JSON.stringify({ data: {}, ok: true }), {
+      return new Response(JSON.stringify({ data: { drift: [] }, ok: true }), {
         headers: { "content-type": "application/json" },
         status: 200,
       });
@@ -538,6 +540,12 @@ describe("saasfunnels features setup", () => {
     );
 
     expect(sent.exitCode).toBe(0);
+    // A candidate scan must reach the preview endpoint. Sending it to ingest
+    // is refused server-side, because only series scans append to a lineage.
+    expect(requestedUrl).toContain("/instrumentation/preview");
+    // The summary is computed here so a CI wrapper needs no module resolution:
+    // npx does not install into the workspace and the package is ESM-only.
+    expect(parseResult(sent.stdout).checkSummary.title).toBeTruthy();
     expect(body.producer).toBe("github_action");
     expect(body.scanRole).toBe("candidate");
     expect(body.schemaVersion).toBe(2);

@@ -23,6 +23,11 @@ import {
   SAASFUNNELS_PRODUCT_NAME,
   saasFunnelsPublicText,
 } from "./identity.js";
+import {
+  formatFeatureDriftCheckSummary,
+  type FeatureDriftEntry,
+  type FeatureDriftRejection,
+} from "./check-summary.js";
 import { serveSaaSFunnelsMcp } from "./mcp.js";
 
 type CliEnv = Record<string, string | undefined>;
@@ -475,8 +480,14 @@ async function commandFeatures(
           "",
           "Missing SAASFUNNELS_API_KEY with features:write scope for --send.\n",
         );
+      // A candidate scan is compared against the series head and discarded, so
+      // it must not reach the ingest endpoint, which only appends series scans.
+      const endpoint =
+        scanRole === "candidate"
+          ? "/api/developer-tools/features/instrumentation/preview"
+          : "/api/developer-tools/features/instrumentation";
       const response = await (options.fetch ?? fetch)(
-        `${apiBaseUrl(options, flags)}/api/developer-tools/features/instrumentation`,
+        `${apiBaseUrl(options, flags)}${endpoint}`,
         {
           body: JSON.stringify(handoff),
           headers: {
@@ -486,9 +497,25 @@ async function commandFeatures(
           method: "POST",
         },
       );
-      const body = await response.json();
+      const body = (await response.json()) as {
+        data?: {
+          drift?: FeatureDriftEntry[];
+          rejectedBindings?: FeatureDriftRejection[];
+        };
+      };
+      // The summary is built here rather than by the caller so a CI wrapper
+      // needs nothing but Node built-ins to render it.
+      const reported = response.ok
+        ? {
+            ...body,
+            checkSummary: formatFeatureDriftCheckSummary({
+              drift: body?.data?.drift ?? [],
+              rejectedBindings: body?.data?.rejectedBindings ?? [],
+            }),
+          }
+        : body;
       return jsonMode(flags)
-        ? jsonResult(response.ok ? 0 : 1, body)
+        ? jsonResult(response.ok ? 0 : 1, reported)
         : response.ok
           ? result(
               0,
