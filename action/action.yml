@@ -1,0 +1,62 @@
+name: SaaSFunnels Feature catalog drift
+description: Reports Feature catalog drift before merge, and records the catalog on the default branch.
+author: SaaSFunnels
+
+inputs:
+  api-key:
+    description: Workspace API key with the features:write scope. Store it as a repository secret.
+    required: true
+  api-base-url:
+    description: Override for localhost or preview environments.
+    required: false
+    default: https://app.saasfunnels.ai
+  catalog-file:
+    description: Path to the Feature catalog manifest.
+    required: false
+    default: .saasfunnels/catalog.yaml
+  cli-version:
+    description: Exact saasfunnels version. Pin it — a floating version changes every drift baseline at once.
+    required: true
+  discovery-roots:
+    description: Comma-separated discovery roots. Changing this starts a new drift lineage.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Report Feature catalog drift
+      shell: bash
+      env:
+        SAASFUNNELS_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        # A pull request is a candidate scan: compared against the series head
+        # and discarded. Only the default branch advances the lineage.
+        if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+          SCAN_ROLE=candidate
+          REVISION="${GITHUB_HEAD_REF}@${GITHUB_SHA}"
+        else
+          SCAN_ROLE=series
+          REVISION="${GITHUB_REF_NAME}@${GITHUB_SHA}"
+        fi
+        npx --yes "saasfunnels@${{ inputs.cli-version }}" features handoff \
+          --file "${{ inputs.catalog-file }}" \
+          --repository-key "github.com/${GITHUB_REPOSITORY}" \
+          --repository-revision "${REVISION}" \
+          --discovery-roots "${{ inputs.discovery-roots }}" \
+          --scan-role "${SCAN_ROLE}" \
+          --producer github_action \
+          --api-base-url "${{ inputs.api-base-url }}" \
+          --send --json > "${RUNNER_TEMP}/drift.json"
+        node -e "
+          const { formatFeatureDriftCheckSummary } = require('saasfunnels/library');
+          const fs = require('fs');
+          const response = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/drift.json', 'utf8'));
+          const check = formatFeatureDriftCheckSummary({
+            drift: response.data?.drift ?? [],
+            rejectedBindings: response.data?.rejectedBindings ?? [],
+          });
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, check.summary + '\n');
+          console.log(check.title);
+        "

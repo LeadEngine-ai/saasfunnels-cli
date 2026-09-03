@@ -1,4 +1,10 @@
 export {
+  formatFeatureDriftCheckSummary,
+  type FeatureDriftEntry,
+  type FeatureDriftRejection,
+} from "./check-summary.js";
+
+export {
   callSaaSFunnelsMcpTool,
   handleSaaSFunnelsMcpMessage,
   hostedSaaSFunnelsMcpToolDefinitions,

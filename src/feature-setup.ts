@@ -965,8 +965,12 @@ export function parseFeatureManifestSource(source: string) {
 }
 
 export function buildFeatureInstrumentationHandoff(input: {
+  discoveryRoots?: readonly string[];
   manifest: FeatureCatalogManifest;
+  producer?: "cli" | "github_action" | "github_app";
+  repositoryKey: string;
   repositoryRevision: string;
+  scanRole?: "series" | "candidate";
   sdkVersions?: readonly string[];
   validatedAt?: string;
 }) {
@@ -983,11 +987,15 @@ export function buildFeatureInstrumentationHandoff(input: {
         symbol: evidence.symbol,
       })),
     ),
+    discoveryRoots: [...new Set(input.discoveryRoots ?? [])].sort(),
     environment: input.manifest.environment,
     manifestFingerprint,
     manifestVersion: manifestFingerprint.slice(0, 16),
+    producer: input.producer ?? "cli",
+    repositoryKey: input.repositoryKey,
     repositoryRevision: input.repositoryRevision,
-    schemaVersion: 1,
+    scanRole: input.scanRole ?? "series",
+    schemaVersion: 2,
     sdkVersions: [...new Set(input.sdkVersions ?? [])].sort(),
     validatedAt: input.validatedAt ?? new Date().toISOString(),
     validationState: "valid",

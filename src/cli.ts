@@ -126,7 +126,7 @@ Usage:
   ${SAASFUNNELS_CLI_NAME} events send-test [--file <file>] [--json]
   ${SAASFUNNELS_CLI_NAME} features setup [--root <paths>] [--exclude <paths>] [--accept <ids|all>] [--reject <ids>] [--map <id=key>] [--manifest-only] [--apply] [--json]
   ${SAASFUNNELS_CLI_NAME} features check --feature <key> --account-id <uuid> [--environment test] [--json]
-  ${SAASFUNNELS_CLI_NAME} features handoff [--file <path>] --repository-revision <revision> [--send] [--json]
+  ${SAASFUNNELS_CLI_NAME} features handoff [--file <path>] --repository-revision <revision> --repository-key <key> [--discovery-roots <paths>] [--scan-role series|candidate] [--producer cli|github_action|github_app] [--send] [--json]
   ${SAASFUNNELS_CLI_NAME} catalog discover [feature setup options]
   ${SAASFUNNELS_CLI_NAME} catalog validate [file] [--json]
   ${SAASFUNNELS_CLI_NAME} catalog diff [feature setup options]
@@ -398,6 +398,40 @@ async function commandFeatures(
         "Missing --repository-revision for the structured Feature handoff.\n",
       );
     }
+    // The repository and its discovery roots identify the drift lineage, so a
+    // scan of one repository can never become the baseline for another.
+    const repositoryKey = flagString(flags, "repository-key");
+    if (!repositoryKey) {
+      return result(
+        2,
+        "",
+        "Missing --repository-key for the structured Feature handoff.\n",
+      );
+    }
+    // A pull request reports a candidate scan: compared against the series head
+    // for the check summary, never appended to the lineage.
+    const scanRole = flagString(flags, "scan-role") ?? "series";
+    if (scanRole !== "series" && scanRole !== "candidate") {
+      return result(2, "", "Use --scan-role series or --scan-role candidate.\n");
+    }
+    // Attribution is what lets two producers scanning one commit collapse into a
+    // single manifest credited to both, so a wrapper must be able to name itself.
+    const producer = flagString(flags, "producer") ?? "cli";
+    if (
+      producer !== "cli" &&
+      producer !== "github_action" &&
+      producer !== "github_app"
+    ) {
+      return result(
+        2,
+        "",
+        "Use --producer cli, --producer github_action, or --producer github_app.\n",
+      );
+    }
+    const discoveryRoots = (flagString(flags, "discovery-roots") ?? "")
+      .split(",")
+      .map((root) => root.trim())
+      .filter(Boolean);
     const source = await filesystem(options).readFile(
       resolve(cwd(options), path),
       "utf8",
@@ -425,8 +459,12 @@ async function commandFeatures(
       // The readiness view will identify missing SDK evidence after handoff.
     }
     const handoff = buildFeatureInstrumentationHandoff({
+      discoveryRoots,
       manifest: validation.manifest,
+      producer,
+      repositoryKey,
       repositoryRevision,
+      scanRole,
       sdkVersions,
     });
     if (hasFlag(flags, "send")) {

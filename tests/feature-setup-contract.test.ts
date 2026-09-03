@@ -433,6 +433,10 @@ describe("saasfunnels features setup", () => {
         "handoff",
         "--repository-revision",
         "git_sha_abc123",
+        "--repository-key",
+        "github.com/leadengine-ai/example",
+        "--discovery-roots",
+        "app,lib",
         "--json",
       ],
       { cwd },
@@ -477,6 +481,8 @@ describe("saasfunnels features setup", () => {
         "handoff",
         "--repository-revision",
         "git_sha_abc123",
+        "--repository-key",
+        "github.com/leadengine-ai/example",
         "--send",
         "--api-base-url",
         "https://app.prevenue.test",
@@ -488,6 +494,53 @@ describe("saasfunnels features setup", () => {
     expect(sent.exitCode).toBe(0);
     expect(parseResult(sent.stdout)).toMatchObject({ ok: true });
     expect(`${sent.stdout}${sent.stderr}`).not.toContain(apiKey);
+  });
+
+  it("attributes a GitHub Action scan to the Action, not the CLI", async () => {
+    const cwd = await nextFixture();
+    tempDirs.push(cwd);
+    await runSaaSFunnelsCli(
+      ["features", "setup", "--accept", "all", "--apply", "--json"],
+      { cwd },
+    );
+
+    let body: any = null;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ data: {}, ok: true }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    const sent = await runSaaSFunnelsCli(
+      [
+        "features",
+        "handoff",
+        "--repository-revision",
+        "pr-head@abc123",
+        "--repository-key",
+        "github.com/leadengine-ai/example",
+        "--scan-role",
+        "candidate",
+        "--producer",
+        "github_action",
+        "--send",
+        "--api-base-url",
+        "https://app.saasfunnels.test",
+        "--json",
+      ],
+      {
+        cwd,
+        env: { SAASFUNNELS_API_KEY: "pv_test_key_value_1234567890" },
+        fetch: fetchImpl,
+      },
+    );
+
+    expect(sent.exitCode).toBe(0);
+    expect(body.producer).toBe("github_action");
+    expect(body.scanRole).toBe("candidate");
+    expect(body.schemaVersion).toBe(2);
   });
 
   it("validates malformed manifests and refuses Live setup", async () => {

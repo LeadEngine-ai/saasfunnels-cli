@@ -2110,13 +2110,24 @@ var featureInstrumentationBindingSchema = z2.object({
   ),
   symbol: z2.string().min(1).max(240)
 }).strict();
+var featureInstrumentationManifestProducers = ["cli", "github_action", "github_app"];
+var featureInstrumentationScanRoles = ["series", "candidate"];
 var featureInstrumentationManifestSchema = z2.object({
   bindings: z2.array(featureInstrumentationBindingSchema).max(1e4),
+  discoveryRoots: z2.array(
+    z2.string().min(1).max(200).refine(
+      (value) => !value.startsWith("/") && !value.includes(".."),
+      "Discovery roots must be relative and contained."
+    )
+  ).max(50),
   environment: z2.enum(funnelFeatureEnvironments),
   manifestFingerprint: fingerprint2,
   manifestVersion: z2.string().min(1).max(80),
+  producer: z2.enum(featureInstrumentationManifestProducers),
+  repositoryKey: z2.string().min(1).max(200),
   repositoryRevision: z2.string().min(1).max(160),
-  schemaVersion: z2.literal(1),
+  scanRole: z2.enum(featureInstrumentationScanRoles),
+  schemaVersion: z2.literal(2),
   sdkVersions: z2.array(z2.string().max(40).regex(/^\d+\.\d+\.\d+$/)).max(10).default([]),
   validatedAt: timestamp2,
   validationState: z2.enum(["valid", "failed"])
@@ -2133,6 +2144,8 @@ var featureInstrumentationManifestSchema = z2.object({
   }
 });
 export {
+  featureInstrumentationManifestProducers,
+  featureInstrumentationScanRoles,
   DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
   developerToolEventSources,
   eventKinds,
