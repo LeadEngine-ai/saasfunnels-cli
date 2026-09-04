@@ -24,6 +24,23 @@ saasfunnels verify --json
 saasfunnels mcp serve
 ```
 
+### Plans and pricing
+
+```bash
+saasfunnels plans discover              # propose files, no network call
+saasfunnels plans discover --apply      # write .saasfunnels/plan-sources.json
+saasfunnels plans handoff --integration-id <id> \
+  --repository-key <repo> --repository-revision <sha> --send
+```
+
+`plans discover` reads the working tree and proposes files that define plans and
+prices. Files that reference a Stripe price are reported as evidence; files that
+only look commercial by name and content are reported separately as guesses.
+Nothing leaves the machine until `.saasfunnels/plan-sources.json` lists the files
+and `plans handoff --send` is run, because plan mapping receives file contents
+rather than the `file:line` references a feature manifest sends. Commit that file
+so the approved set is reviewable.
+
 Local validation does not require credentials. Live reads use `SAASFUNNELS_API_KEY`; Direct API smoke events use `SAASFUNNELS_INGEST_API_KEY`. Set `SAASFUNNELS_API_BASE_URL` to target a controlled preview or the current SaaSFunnels host.
 
 Hosted interactive MCP uses Clerk OAuth at the application `/mcp` URL and does not require this CLI or a copied API key.

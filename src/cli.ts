@@ -28,6 +28,15 @@ import {
   type FeatureDriftEntry,
   type FeatureDriftRejection,
 } from "./check-summary.js";
+import {
+  buildPlanMappingHandoff,
+  discoverPlanSourceCandidates,
+  maxPlanSourceFiles,
+  planMappingRequestKey,
+  planSourceApprovalPath,
+  readApprovedPlanSources,
+  writeApprovedPlanSources,
+} from "./plan-sources.js";
 import { serveSaaSFunnelsMcp } from "./mcp.js";
 
 type CliEnv = Record<string, string | undefined>;
@@ -132,6 +141,8 @@ Usage:
   ${SAASFUNNELS_CLI_NAME} features setup [--root <paths>] [--exclude <paths>] [--accept <ids|all>] [--reject <ids>] [--map <id=key>] [--manifest-only] [--apply] [--json]
   ${SAASFUNNELS_CLI_NAME} features check --feature <key> --account-id <uuid> [--environment test] [--json]
   ${SAASFUNNELS_CLI_NAME} features handoff [--file <path>] --repository-revision <revision> --repository-key <key> [--discovery-roots <paths>] [--scan-role series|candidate] [--producer cli|github_action|github_app] [--send] [--json]
+  ${SAASFUNNELS_CLI_NAME} plans discover [--root <paths>] [--exclude <paths>] [--apply] [--json]
+  ${SAASFUNNELS_CLI_NAME} plans handoff --repository-key <key> --repository-revision <rev> --integration-id <uuid> [--send] [--json]
   ${SAASFUNNELS_CLI_NAME} catalog discover [feature setup options]
   ${SAASFUNNELS_CLI_NAME} catalog validate [file] [--json]
   ${SAASFUNNELS_CLI_NAME} catalog diff [feature setup options]
@@ -1010,6 +1021,156 @@ async function commandMcp(
   return result(2, "", `Usage: ${SAASFUNNELS_CLI_NAME} mcp serve\n`);
 }
 
+async function commandPlans(
+  args: string[],
+  flags: ParsedArgs["flags"],
+  options: SaaSFunnelsCliOptions,
+): Promise<SaaSFunnelsCliResult> {
+  if (args[0] === "discover") {
+    const candidates = await discoverPlanSourceCandidates({
+      cwd: cwd(options),
+      excludes: flagList(flags, "exclude"),
+      roots: flagList(flags, "root").length ? flagList(flags, "root") : undefined,
+    });
+    if (!candidates.length) {
+      return jsonMode(flags)
+        ? jsonResult(0, { candidates: [], ok: true })
+        : result(
+            0,
+            "No plan or pricing definition files found. Map plans to Features in SaaSFunnels instead.\n",
+          );
+    }
+    // Discovery only proposes. Nothing is uploaded until the approved list is
+    // written and committed, so a file cannot leave CI unreviewed.
+    const approved = candidates.slice(0, maxPlanSourceFiles);
+    if (hasFlag(flags, "apply")) {
+      if (options.prompt) {
+        const confirmation = await options.prompt(
+          `Approve these files for upload to SaaSFunnels: ${approved
+            .map((candidate) => candidate.path)
+            .join(", ")}? [y/N] `,
+        );
+        if (!/^y(?:es)?\$/i.test(confirmation.trim())) {
+          return result(2, "", "Plan source approval was cancelled.\n");
+        }
+      }
+      await writeApprovedPlanSources(
+        cwd(options),
+        approved.map((candidate) => candidate.path),
+      );
+    }
+    if (jsonMode(flags))
+      return jsonResult(0, {
+        approvalPath: planSourceApprovalPath,
+        candidates,
+        ok: true,
+        written: hasFlag(flags, "apply"),
+      });
+    const confirmed = candidates.filter((candidate) => candidate.hasStripePriceId);
+    const namedOnly = candidates.filter((candidate) => !candidate.hasStripePriceId);
+    const lines: string[] = [];
+    if (confirmed.length) {
+      lines.push("Defines Stripe prices:");
+      confirmed.forEach((candidate) =>
+        lines.push(`  ${candidate.path} (${candidate.kind})`),
+      );
+    }
+    if (namedOnly.length) {
+      if (confirmed.length) lines.push("");
+      lines.push(
+        confirmed.length
+          ? "Named like pricing configuration, no Stripe price found:"
+          : "No file defines a Stripe price. These matched by name only:",
+      );
+      namedOnly.forEach((candidate) =>
+        lines.push(`  ${candidate.path} (${candidate.kind})`),
+      );
+    }
+    return result(
+      0,
+      `${lines.join("\n")}\n\n${
+        hasFlag(flags, "apply")
+          ? `Approved ${approved.length} file(s) in ${planSourceApprovalPath}. Review and commit it.`
+          : `Re-run with --apply to record these in ${planSourceApprovalPath}.`
+      }\n`,
+    );
+  }
+
+  if (args[0] === "handoff") {
+    const repositoryKey = flagString(flags, "repository-key");
+    if (!repositoryKey)
+      return result(2, "", "Missing --repository-key for the plan mapping handoff.\n");
+    const repositoryRevision = flagString(flags, "repository-revision");
+    if (!repositoryRevision)
+      return result(
+        2,
+        "",
+        "Missing --repository-revision for the plan mapping handoff.\n",
+      );
+    const integrationId = flagString(flags, "integration-id");
+    if (!integrationId)
+      return result(2, "", "Missing --integration-id for the plan mapping handoff.\n");
+
+    const files = await readApprovedPlanSources(cwd(options));
+    if (!files.length)
+      return result(
+        2,
+        "",
+        `No approved plan sources. Run "${SAASFUNNELS_CLI_NAME} plans discover --apply" and commit ${planSourceApprovalPath}.\n`,
+      );
+
+    const { inputs } = await buildPlanMappingHandoff({ cwd: cwd(options), files });
+    const requestKey = planMappingRequestKey({ repositoryKey, repositoryRevision });
+
+    if (!hasFlag(flags, "send")) {
+      // Unlike the Feature manifest, this carries file contents, so the dry run
+      // names every file rather than printing what would be uploaded.
+      return jsonMode(flags)
+        ? jsonResult(0, {
+            files: inputs.map((entry) => entry.label),
+            ok: true,
+            requestKey,
+          })
+        : result(
+            0,
+            `Would upload for plan mapping:\n${inputs
+              .map((entry) => `- ${entry.label}`)
+              .join("\n")}\n\nAdd --send to upload.\n`,
+          );
+    }
+
+    const key = envValue(options, SAASFUNNELS_ENV.apiKey);
+    if (!key)
+      return result(
+        2,
+        "",
+        "Missing SAASFUNNELS_API_KEY with catalog access for --send.\n",
+      );
+    const response = await (options.fetch ?? fetch)(
+      `${apiBaseUrl(options, flags)}/api/funnels/catalog/plan-mapping/imports`,
+      {
+        body: JSON.stringify({ inputs, integrationId, requestKey }),
+        headers: {
+          authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      },
+    );
+    const body = await response.json();
+    return jsonMode(flags)
+      ? jsonResult(response.ok ? 0 : 1, body)
+      : response.ok
+        ? result(
+            0,
+            `Staged ${inputs.length} plan source(s) for review in SaaSFunnels.\n`,
+          )
+        : result(1, "", "The plan mapping handoff was rejected.\n");
+  }
+
+  return result(2, "", `Unknown plans command.\n\n${usage()}`);
+}
+
 export async function runSaaSFunnelsCli(
   argv: string[],
   options: SaaSFunnelsCliOptions = {},
@@ -1029,6 +1190,8 @@ export async function runSaaSFunnelsCli(
       return await commandFeatures(args, parsed.flags, options);
     if (command === "catalog")
       return await commandCatalog(args, parsed.flags, options);
+    if (command === "plans")
+      return await commandPlans(args, parsed.flags, options);
     if (command === "doctor") return await commandDoctor(parsed.flags, options);
     if (command === "readiness")
       return await commandReadiness(parsed.flags, options);
