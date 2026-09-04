@@ -28,6 +28,7 @@ import {
   type FeatureDriftEntry,
   type FeatureDriftRejection,
 } from "./check-summary.js";
+import { clusterPlanBranches, discoverPlanBranches } from "./plan-branches.js";
 import {
   buildPlanMappingHandoff,
   discoverPlanSourceCandidates,
@@ -142,6 +143,7 @@ Usage:
   ${SAASFUNNELS_CLI_NAME} features check --feature <key> --account-id <uuid> [--environment test] [--json]
   ${SAASFUNNELS_CLI_NAME} features handoff [--file <path>] --repository-revision <revision> --repository-key <key> [--discovery-roots <paths>] [--scan-role series|candidate] [--producer cli|github_action|github_app] [--send] [--json]
   ${SAASFUNNELS_CLI_NAME} plans discover [--root <paths>] [--exclude <paths>] [--apply] [--json]
+  ${SAASFUNNELS_CLI_NAME} plans branches --plans <names> [--root <paths>] [--json]
   ${SAASFUNNELS_CLI_NAME} plans handoff --repository-key <key> --repository-revision <rev> --integration-id <uuid> [--send] [--json]
   ${SAASFUNNELS_CLI_NAME} catalog discover [feature setup options]
   ${SAASFUNNELS_CLI_NAME} catalog validate [file] [--json]
@@ -1026,6 +1028,54 @@ async function commandPlans(
   flags: ParsedArgs["flags"],
   options: SaaSFunnelsCliOptions,
 ): Promise<SaaSFunnelsCliResult> {
+  if (args[0] === "branches") {
+    // Plan names come from the synced Stripe catalog. Without them every string
+    // literal looks like a plan, which is how `status === "active"` gets read
+    // as pricing. No catalog, no answer — rather than a guess.
+    const planValues = flagList(flags, "plans");
+    if (!planValues.length)
+      return result(
+        2,
+        "",
+        "Missing --plans with the plan names from your Stripe catalog.\n",
+      );
+    const branches = await discoverPlanBranches({
+      cwd: cwd(options),
+      excludes: flagList(flags, "exclude"),
+      planValues,
+      roots: flagList(flags, "root").length ? flagList(flags, "root") : undefined,
+    });
+    const clusters = clusterPlanBranches(branches);
+    if (flags.json) {
+      return result(0, `${JSON.stringify({ branches, clusters }, null, 2)}\n`, "");
+    }
+    if (!branches.length) {
+      return result(
+        0,
+        "No plan branches found. This codebase may read entitlements rather than comparing plan names.\n",
+        "",
+      );
+    }
+    const lines = [
+      `${branches.length} plan branch(es) in ${clusters.length} group(s):`,
+      "",
+    ];
+    for (const cluster of clusters) {
+      const polarity =
+        cluster.polarity === "deny"
+          ? "restricts"
+          : cluster.polarity === "grant"
+            ? "grants"
+            : "unclear";
+      lines.push(
+        `  ${cluster.location} — ${cluster.planValues.join(", ")} (${cluster.shape}, ${polarity}, ${cluster.branches.length} site(s))`,
+      );
+    }
+    lines.push("");
+    lines.push("Each group is one place your product differs by plan. Naming what");
+    lines.push("each one gates is a review step; nothing is guessed here.");
+    return result(0, `${lines.join("\n")}\n`, "");
+  }
   if (args[0] === "discover") {
     const candidates = await discoverPlanSourceCandidates({
       cwd: cwd(options),

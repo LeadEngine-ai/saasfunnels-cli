@@ -1,47 +1,88 @@
 {
-  "note": "Public SaaS repositories used to measure discovery heuristics. Commits are pinned so a heuristic change shows as a report diff rather than corpus drift. `declaresPricing` records what a human confirmed by reading the repository, and is the expectation the report is scored against.",
+  "note": "Public SaaS repositories used to measure discovery heuristics. Commits are pinned so a heuristic change shows as a report diff rather than corpus drift. `declaresPricing` records what a human confirmed by reading the repository. `planValues` stands in for a synced Stripe catalog and is taken from each repository's own plan enum or its observed plan literals, never invented.",
   "repositories": [
     {
       "name": "dub",
       "url": "https://github.com/dubinc/dub.git",
       "commit": "73415cf5e6be13ce9adb7ba5e97474307db34a17",
       "declaresPricing": true,
-      "why": "Link shortener SaaS. Declares plans and Stripe price IDs in packages/utils/src/constants/pricing/."
+      "why": "Link shortener SaaS. Declares plans and Stripe price IDs in packages/utils/src/constants/pricing/.",
+      "planValues": [
+        "free",
+        "pro",
+        "business",
+        "advanced",
+        "enterprise"
+      ]
     },
     {
       "name": "papermark",
       "url": "https://github.com/mfts/papermark.git",
       "commit": "ed19717ec02a1ac79aecf5569159aa9d2d869312",
       "declaresPricing": true,
-      "why": "Document sharing SaaS. Carries Stripe price identifiers in code."
+      "why": "Document sharing SaaS. Carries Stripe price identifiers in code.",
+      "planValues": [
+        "free",
+        "starter",
+        "pro",
+        "business",
+        "datarooms",
+        "datarooms-plus",
+        "datarooms-premium",
+        "datarooms-unlimited"
+      ]
     },
     {
       "name": "twenty",
       "url": "https://github.com/twentyhq/twenty.git",
       "commit": "61b0989c4ac1e1cdf3d08c752b15793fae8d990a",
       "declaresPricing": true,
-      "why": "CRM. Large monorepo, useful as a scale case as well as a pricing case."
+      "why": "CRM. Large monorepo, useful as a scale case as well as a pricing case.",
+      "planValues": [
+        "pro",
+        "enterprise"
+      ]
     },
     {
       "name": "documenso",
       "url": "https://github.com/documenso/documenso.git",
       "commit": "2cac63a000e22422bdea449f68b8025e709aa73a",
       "declaresPricing": false,
-      "why": "Reads pricing from Stripe rather than declaring it. Finding nothing here is the correct outcome."
+      "why": "Reads pricing from Stripe rather than declaring it. Finding nothing here is the correct outcome.",
+      "planValues": [
+        "free",
+        "individual",
+        "team",
+        "enterprise"
+      ]
     },
     {
       "name": "formbricks",
       "url": "https://github.com/formbricks/formbricks.git",
       "commit": "4f597cbb302254dfcaa1d90b31913944607df946",
       "declaresPricing": false,
-      "why": "Survey SaaS with plan tiers but no price identifiers in code."
+      "why": "Survey SaaS with plan tiers but no price identifiers in code.",
+      "planValues": [
+        "free",
+        "hobby",
+        "startup",
+        "scale",
+        "enterprise"
+      ]
     },
     {
       "name": "unkey",
       "url": "https://github.com/unkeyed/unkey.git",
       "commit": "e1ae96dcbe7f119fca6f793615724c6e8ec5907c",
       "declaresPricing": false,
-      "why": "API key management SaaS. Usage-based billing without price identifiers in code."
+      "why": "API key management SaaS. Usage-based billing without price identifiers in code.",
+      "planValues": [
+        "free",
+        "starter",
+        "pro",
+        "business",
+        "enterprise"
+      ]
     }
   ]
 }

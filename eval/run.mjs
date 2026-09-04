@@ -140,6 +140,20 @@ async function measure(root) {
   };
 }
 
+async function branches(root, planValues) {
+  if (!planValues?.length) return { branches: [], clusters: [] };
+  try {
+    const { stdout } = await run(
+      "node",
+      [cliPath, "plans", "branches", "--plans", planValues.join(","), "--json"],
+      { cwd: root, maxBuffer: 1024 * 1024 * 64 },
+    );
+    return JSON.parse(stdout);
+  } catch {
+    return { branches: [], clusters: [] };
+  }
+}
+
 async function discover(root) {
   try {
     const { stdout } = await run("node", [cliPath, "plans", "discover", "--json"], {
@@ -172,14 +186,21 @@ async function main() {
     const root = await ensureClone(repository);
     const measured = await measure(root);
     const discovered = await discover(root);
+    const branched = await branches(root, repository.planValues);
     const candidates = discovered.candidates ?? [];
     const confirmed = candidates.filter((item) => item.hasStripePriceId);
     const namedOnly = candidates.filter((item) => !item.hasStripePriceId);
     const proposed = new Set(candidates.map((item) => item.path));
     const found = measured.priceFiles.filter((file) => proposed.has(file));
 
+    const decided = (branched.branches ?? []).filter(
+      (item) => item.polarity !== "unclear",
+    );
     rows.push({
       ...repository,
+      branchClusters: (branched.clusters ?? []).length,
+      branchCount: (branched.branches ?? []).length,
+      branchesDecided: decided.length,
       candidates: candidates.length,
       comparisons: measured.comparisons,
       comparisonsNearGate: measured.comparisonsNearGate,
@@ -260,6 +281,24 @@ async function main() {
   lines.push("");
   lines.push(
     `**Across the corpus: ${totalGateSites} gate sites, ${totalComparisons} plan comparisons, ${totalNearGate} of them near a gate site (${percent(totalNearGate, totalComparisons)}).**`,
+  );
+  lines.push("");
+  lines.push("## Plan branch extraction (LEA-1142)");
+  lines.push("");
+  lines.push(
+    "What `plans branches` extracts, filtered by the plan names in `corpus.json`. `Clusters` is the reviewable unit: one directory where the product forks by plan. `Polarity decided` counts branches where the code states which way it runs — a bail-out, an upgrade prompt, or a binding named for the restriction. The rest are reported as unclear rather than guessed.",
+  );
+  lines.push("");
+  lines.push("| Repository | Branches | Clusters | Polarity decided |");
+  lines.push("|---|---|---|---|");
+  for (const row of rows) {
+    lines.push(
+      `| ${row.name} | ${row.branchCount} | ${row.branchClusters} | ${row.branchesDecided} (${percent(row.branchesDecided, row.branchCount)}) |`,
+    );
+  }
+  lines.push("");
+  lines.push(
+    "Twenty returns nothing because its plans are an enum — `BillingPlanKey.PRO`, not `\"pro\"` — and extraction only reads string literals. That is a real limit of this approach, recorded here rather than hidden: a codebase using enum members needs constant resolution before any of its plan branches are visible.",
   );
   lines.push("");
   lines.push("### Literals compared against");
