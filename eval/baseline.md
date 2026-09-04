@@ -101,14 +101,14 @@ What `plans branches` extracts, filtered by the plan names in `corpus.json`. `Cl
 
 | Repository | Branches | Clusters | Polarity decided |
 |---|---|---|---|
-| dub | 126 | 43 | 31 (25%) |
-| papermark | 53 | 22 | 14 (26%) |
-| twenty | 0 | 0 | 0 (n/a) |
-| documenso | 0 | 0 | 0 (n/a) |
-| formbricks | 26 | 3 | 5 (19%) |
+| dub | 166 | 45 | 36 (22%) |
+| papermark | 114 | 29 | 19 (17%) |
+| twenty | 17 | 5 | 0 (0%) |
+| documenso | 5 | 5 | 1 (20%) |
+| formbricks | 40 | 4 | 6 (15%) |
 | unkey | 7 | 2 | 0 (0%) |
 
-Twenty returns nothing because its plans are an enum — `BillingPlanKey.PRO`, not `"pro"` — and extraction only reads string literals. That is a real limit of this approach, recorded here rather than hidden: a codebase using enum members needs constant resolution before any of its plan branches are visible.
+Plan values are resolved through enum members and string constants as well as literals, so a codebase that never compares against a literal is still visible: twenty compares only against `BillingPlanKey.PRO`.
 
 ### Literals compared against
 

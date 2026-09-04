@@ -298,7 +298,7 @@ async function main() {
   }
   lines.push("");
   lines.push(
-    "Twenty returns nothing because its plans are an enum — `BillingPlanKey.PRO`, not `\"pro\"` — and extraction only reads string literals. That is a real limit of this approach, recorded here rather than hidden: a codebase using enum members needs constant resolution before any of its plan branches are visible.",
+    "Plan values are resolved through enum members and string constants as well as literals, so a codebase that never compares against a literal is still visible: twenty compares only against `BillingPlanKey.PRO`.",
   );
   lines.push("");
   lines.push("### Literals compared against");

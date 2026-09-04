@@ -26,12 +26,27 @@ export const maxPlanBranchFileCharacters = 2_000_000;
 // either layout.
 const codeExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 const nonDefinitionPattern =
-  /(^|\/)(__tests__|__mocks__|tests?|specs?|fixtures?)(\/)|\.(test|spec|d)\.[cm]?[jt]sx?$/i;
+  /(^|\/)(__tests__|__mocks__|tests?|specs?|fixtures?|testing|mocks?|mock-data|stories|__stories__)(\/)|\.(test|spec|d|stories)\.[cm]?[jt]sx?$/i;
 
-// A plan-ish identifier compared against a string literal.
+// A plan-ish identifier compared against a string literal or a constant.
 const comparisonPattern =
-  /\b([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*(===|==|!==|!=)\s*["'`]([A-Za-z][A-Za-z0-9_ -]{0,39})["'`]/g;
-const planIdentifierPattern = /(^|\.)(plan|tier|level|subscription|package)s?$/i;
+  /\b([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*(===|==|!==|!=)\s*(?:["'`]([A-Za-z][A-Za-z0-9_ -]{0,39})["'`]|([A-Za-z_$][\w$]*(?:\.[\w$]+){0,2}))/g;
+// Matched loosely on purpose. Real code writes `planKey`, `currentPlan.planKey`,
+// and `targetPlanKey`, so anchoring at the end of the name misses most of it.
+// Over-matching here is safe because the catalog decides: `subscriptionStatus
+// === "active"` passes this test and is then rejected, because "active" is not
+// a plan.
+const planIdentifierPattern = /(plan|tier|level|subscription|package)/i;
+
+// Enum members and string constants, so `plan === BillingPlanKey.PRO` resolves.
+// Twenty is entirely invisible without this: it never compares against a
+// literal.
+const enumOpenPattern = /\b(?:enum|const)\s+([A-Za-z_$][\w$]*)\s*(?:=\s*)?\{/;
+const memberPattern =
+  /^\s*([A-Za-z_$][\w$]*)\s*[:=]\s*["'`]([A-Za-z][A-Za-z0-9_ -]{0,39})["'`]/;
+const blockClosePattern = /^\s*\}/;
+const simpleConstPattern =
+  /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w<>[\]|\s]+)?=\s*["'`]([A-Za-z][A-Za-z0-9_ -]{0,39})["'`]/;
 
 // Denial is the one polarity a line-based read can claim with confidence: the
 // matched branch bails out or offers an upgrade. Anything else stays unclear
@@ -47,6 +62,60 @@ const restrictionNamePattern =
 const numericBranchPattern = /\?\s*[\d_]+\s*:\s*[\d_]+|:\s*[\d_]+\s*[,;)]/;
 
 export type PlanBranchPolarity = "deny" | "grant" | "unclear";
+
+// `Enum.MEMBER` and `CONST` to their string values. A name bound to two
+// different values anywhere in the tree is dropped rather than guessed at.
+type ConstantIndex = Map<string, string | null>;
+
+function collectConstants(lines: readonly string[], into: ConstantIndex) {
+  let container: string | null = null;
+  for (const line of lines) {
+    if (container && blockClosePattern.test(line)) {
+      container = null;
+      continue;
+    }
+    if (!container) {
+      const open = line.match(enumOpenPattern);
+      if (open?.[1]) {
+        container = open[1];
+        continue;
+      }
+      const simple = line.match(simpleConstPattern);
+      if (simple?.[1] && simple[2]) record(into, simple[1], simple[2]);
+      continue;
+    }
+    const member = line.match(memberPattern);
+    if (member?.[1] && member[2]) {
+      record(into, `${container}.${member[1]}`, member[2]);
+      record(into, member[1], member[2]);
+    }
+  }
+}
+
+function record(into: ConstantIndex, name: string, value: string) {
+  const normalized = value.toLowerCase();
+  if (!into.has(name)) {
+    into.set(name, normalized);
+    return;
+  }
+  // Ambiguous across the tree, so it resolves to nothing.
+  if (into.get(name) !== normalized) into.set(name, null);
+}
+
+function resolveConstant(index: ConstantIndex, reference: string) {
+  const direct = index.get(reference);
+  if (direct !== undefined) return direct;
+  // `BillingPlanKey.PRO` may have been indexed under a shorter qualification.
+  const segments = reference.split(".");
+  if (segments.length > 1) {
+    const tail = segments.slice(-2).join(".");
+    const viaTail = index.get(tail);
+    if (viaTail !== undefined) return viaTail;
+    const viaMember = index.get(segments[segments.length - 1]!);
+    if (viaMember !== undefined) return viaMember;
+  }
+  return undefined;
+}
 
 export type PlanBranch = {
   line: number;
@@ -163,6 +232,14 @@ export async function discoverPlanBranches(input: {
   const roots = input.roots ?? [".", ...defaultRoots];
   const seen = new Set<string>();
   const branches: PlanBranch[] = [];
+  const constants: ConstantIndex = new Map();
+  const pending: Array<
+    Omit<PlanBranch, "planValue"> & {
+      literal: string | null;
+      negated: boolean;
+      reference: string | null;
+    }
+  > = [];
   const queue = roots.map((root) => resolve(input.cwd, root));
 
   while (queue.length) {
@@ -189,22 +266,42 @@ export async function discoverPlanBranches(input: {
     if (entryStat.size > maxPlanBranchFileCharacters) continue;
 
     const lines = (await readFile(current, "utf8")).split(/\r?\n/);
+    collectConstants(lines, constants);
     lines.forEach((line, lineIndex) => {
       comparisonPattern.lastIndex = 0;
       let match;
       while ((match = comparisonPattern.exec(line))) {
-        const [, identifier, operator, literal] = match;
+        const [, identifier, operator, literal, reference] = match;
         if (!planIdentifierPattern.test(identifier ?? "")) continue;
-        if (!planValues.has((literal ?? "").toLowerCase())) continue;
-        branches.push({
+        if (!literal && !reference) continue;
+        pending.push({
           line: lineIndex + 1,
-          planValue: literal!.toLowerCase(),
+          literal: literal ?? null,
+          negated: operator!.startsWith("!"),
           polarity: polarityAt(lines, lineIndex, operator!.startsWith("!")),
+          reference: reference ?? null,
           repositoryPath: relativePath,
           shape: numericBranchPattern.test(line) ? "limit" : "boolean",
           symbol: nearestSymbol(lines, lineIndex),
         });
       }
+    });
+  }
+
+  // Constants are resolved only after the whole tree is indexed: an enum is
+  // rarely declared in the file that compares against it.
+  for (const item of pending) {
+    const value = item.literal
+      ? item.literal.toLowerCase()
+      : resolveConstant(constants, item.reference!);
+    if (!value || !planValues.has(value)) continue;
+    branches.push({
+      line: item.line,
+      planValue: value,
+      polarity: item.polarity,
+      repositoryPath: item.repositoryPath,
+      shape: item.shape,
+      symbol: item.symbol,
     });
   }
   return branches.sort(

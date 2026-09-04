@@ -79,6 +79,74 @@ describe("plan branch discovery", () => {
     expect(polarity["src/d.ts:1"]).toBe("unclear");
   });
 
+  it("resolves an enum member declared in another file", async () => {
+    // Twenty compares against BillingPlanKey.PRO and never against a literal,
+    // so literal-only extraction sees none of its plan branches.
+    const cwd = await fixture({
+      "src/billing/plan-key.enum.ts":
+        "export enum BillingPlanKey {\n  PRO = 'PRO',\n  ENTERPRISE = 'ENTERPRISE',\n}\n",
+      "src/billing/flags.ts":
+        "const isProPlan = planKey === BillingPlanKey.PRO;\n" +
+        "const isEnterprise = currentPlan.planKey === BillingPlanKey.ENTERPRISE;\n",
+    });
+
+    const branches = await discoverPlanBranches({
+      cwd,
+      planValues: ["pro", "enterprise"],
+    });
+
+    expect(branches.map((branch) => branch.planValue).sort()).toEqual([
+      "enterprise",
+      "pro",
+    ]);
+  });
+
+  it("resolves a constant object and a plain string constant", async () => {
+    const cwd = await fixture({
+      "src/tiers.ts":
+        "export const TIERS = {\n  PRO: 'pro',\n} as const;\nexport const FREE_PLAN = 'free';\n",
+      "src/gate.ts":
+        "if (subscriptionTier === TIERS.PRO) { chart(); }\n" +
+        "if (workspace.plan === FREE_PLAN) { upsell(); }\n",
+    });
+
+    const branches = await discoverPlanBranches({
+      cwd,
+      planValues: ["free", "pro"],
+    });
+    expect(branches.map((branch) => branch.planValue).sort()).toEqual([
+      "free",
+      "pro",
+    ]);
+  });
+
+  it("refuses a constant that means two different things", async () => {
+    const cwd = await fixture({
+      "src/a.ts": "export const LEVEL = 'pro';\n",
+      "src/b.ts": "export const LEVEL = 'free';\n",
+      "src/gate.ts": "if (plan === LEVEL) { chart(); }\n",
+    });
+    // Ambiguous across the tree, so it resolves to nothing rather than picking.
+    expect(
+      await discoverPlanBranches({ cwd, planValues: ["free", "pro"] }),
+    ).toEqual([]);
+  });
+
+  it("ignores an identifier it cannot resolve", async () => {
+    const cwd = await fixture({
+      "src/gate.ts": "if (plan === somethingImported) { chart(); }\n",
+    });
+    expect(await discoverPlanBranches({ cwd, planValues: plans })).toEqual([]);
+  });
+
+  it("matches a plan value whatever its casing", async () => {
+    const cwd = await fixture({
+      "src/gate.ts": 'if (plan === "Pro") { chart(); }\n',
+    });
+    const [branch] = await discoverPlanBranches({ cwd, planValues: plans });
+    expect(branch?.planValue).toBe("pro");
+  });
+
   it("marks a branch between two numbers as a limit rather than a boolean", async () => {
     const cwd = await fixture({
       "src/quota.ts": 'const seats = plan === "free" ? 3 : 100;\n',
