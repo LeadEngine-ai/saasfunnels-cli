@@ -70,8 +70,25 @@ type ParsedArgs = {
 const cliSchemaVersion = "2026-07-02.1";
 const targetNames = new Set(["codex", "claude-code", "cursor", "markdown"]);
 const sourceNames = new Set(["direct", "posthog", "segment"]);
+// The prefixed forms are exact. The generic form is a guess about entropy, and
+// it used to be `[A-Za-z0-9_-]{32,}` — which matches any long identifier, so
+// `SettingsBillingTrialNoPaymentMethodBanner` (41 characters, a real filename)
+// was redacted as a secret. Requiring a digit keeps the opaque tokens people
+// actually leak (base64, hex, nanoid, UUIDs) and lets prose-shaped names alone.
 const tokenPattern =
-  /\b((?:pv|sk|pk|rk|whsec|xox[baprs]|gh[pousr])_[A-Za-z0-9_=-]{8,}|[A-Za-z0-9_-]{32,})\b/g;
+  /\b((?:pv|sk|pk|rk|whsec|xox[baprs]|gh[pousr])_[A-Za-z0-9_=-]{8,}|(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{32,})\b/g;
+
+// Keys whose values are file paths. Redacting a path does not protect anything
+// — discovery never reads a sensitive path in the first place — and it destroys
+// the one thing a consumer needs to reopen the file.
+const pathValuedKeys = new Set([
+  "approvalPath",
+  "file",
+  "files",
+  "location",
+  "path",
+  "repositoryPath",
+]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const args: string[] = [];
@@ -126,8 +143,38 @@ function result(exitCode: number, stdout = "", stderr = ""): SaaSFunnelsCliResul
   };
 }
 
+/**
+ * Redacts string leaves of a structured payload, leaving path-valued keys
+ * intact. Redacting the serialized JSON instead corrupts the data: a mangled
+ * path still parses, so the consumer gets a plausible file name that does not
+ * exist rather than an error it can act on.
+ */
+function redactStructured(value: unknown, key?: string): unknown {
+  if (typeof value === "string") {
+    return key && pathValuedKeys.has(key) ? value : redactOutput(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactStructured(item, key));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, item]) => [
+        name,
+        redactStructured(item, name),
+      ]),
+    );
+  }
+  return value;
+}
+
 function jsonResult(exitCode: number, data: unknown) {
-  return result(exitCode, `${JSON.stringify(data, null, 2)}\n`);
+  // Already redacted structurally, so the serialized form must not be redacted
+  // again — that is what mangled the paths.
+  return {
+    exitCode,
+    stderr: "",
+    stdout: `${JSON.stringify(redactStructured(data), null, 2)}\n`,
+  };
 }
 
 function usage() {
@@ -538,7 +585,7 @@ async function commandFeatures(
     }
     return jsonMode(flags)
       ? jsonResult(0, handoff)
-      : result(0, `${JSON.stringify(handoff, null, 2)}\n`);
+      : jsonResult(0, handoff);
   }
   return result(
     2,
@@ -1047,7 +1094,7 @@ async function commandPlans(
     });
     const clusters = clusterPlanBranches(branches);
     if (flags.json) {
-      return result(0, `${JSON.stringify({ branches, clusters }, null, 2)}\n`, "");
+      return jsonResult(0, { branches, clusters });
     }
     if (!branches.length) {
       return result(

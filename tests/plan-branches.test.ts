@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { runSaaSFunnelsCli } from "../src/cli.js";
 import {
   clusterPlanBranches,
   discoverPlanBranches,
@@ -204,5 +205,37 @@ describe("plan branch discovery", () => {
       { ...base, line: 4, polarity: "grant" },
     ]);
     expect(cluster?.polarity).toBe("unclear");
+  });
+});
+
+describe("output redaction", () => {
+  it("keeps a long component filename intact in JSON, and still hides a secret", async () => {
+    const cwd = await fixture({
+      // 41 characters, no digits — indistinguishable from an opaque token under
+      // a length-only rule, and the reason twenty's branches were unreadable.
+      "src/billing/SettingsBillingTrialNoPaymentMethodBanner.tsx":
+        'if (plan === "pro") { render(); }\n',
+    });
+
+    const result = await runSaaSFunnelsCli(
+      ["plans", "branches", "--plans", "pro", "--json"],
+      { cwd, env: {} },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.branches[0]?.repositoryPath).toBe(
+      "src/billing/SettingsBillingTrialNoPaymentMethodBanner.tsx",
+    );
+    expect(result.stdout).not.toContain("[redacted-token]");
+  });
+
+  it("still redacts a credential that reaches human-readable output", async () => {
+    const cwd = await fixture({ "src/plans.ts": "export const PLANS = {};\n" });
+    const result = await runSaaSFunnelsCli(
+      ["plans", "handoff", "--integration-id", "pv_live_9f2a7c4b8e1d6a35f0c9b2e7"],
+      { cwd, env: {} },
+    );
+    expect(result.stderr + result.stdout).not.toContain("9f2a7c4b8e1d6a35f0c9b2e7");
   });
 });
