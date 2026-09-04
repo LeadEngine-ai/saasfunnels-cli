@@ -41,6 +41,32 @@ and `plans handoff --send` is run, because plan mapping receives file contents
 rather than the `file:line` references a feature manifest sends. Commit that file
 so the approved set is reviewable.
 
+### GitHub Action
+
+```yaml
+- uses: LeadEngine-ai/saasfunnels-cli/action@v0.2.0
+  with:
+    api-key: ${{ secrets.SAASFUNNELS_API_KEY }}
+    cli-version: 0.2.0          # pin it; a floating version rebaselines drift
+    discovery-roots: app,lib
+```
+
+On a pull request the Action scans as a `candidate`: the result is compared
+against the branch's baseline and discarded. Only the default branch advances
+the lineage. Changing `discovery-roots` starts a new lineage, so drift is
+measured against a comparable scan rather than a wider or narrower one.
+
+Plan and pricing upload is opt-in:
+
+```yaml
+    plan-sources: "true"
+    integration-id: <stripe integration id>
+```
+
+It runs only on the default branch, requires a committed
+`.saasfunnels/plan-sources.json`, and fails with an explanation rather than
+uploading anything if that file is missing.
+
 Local validation does not require credentials. Live reads use `SAASFUNNELS_API_KEY`; Direct API smoke events use `SAASFUNNELS_INGEST_API_KEY`. Set `SAASFUNNELS_API_BASE_URL` to target a controlled preview or the current SaaSFunnels host.
 
 Hosted interactive MCP uses Clerk OAuth at the application `/mcp` URL and does not require this CLI or a copied API key.

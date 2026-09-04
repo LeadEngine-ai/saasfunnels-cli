@@ -21,6 +21,18 @@ inputs:
     description: Comma-separated discovery roots. Changing this starts a new drift lineage.
     required: false
     default: ""
+  plan-sources:
+    description: >-
+      Upload the plan and pricing files listed in .saasfunnels/plan-sources.json
+      so plan mapping stays current. Off by default: unlike the drift manifest,
+      which sends only file:line references, this uploads file contents. Turn it
+      on only once someone has reviewed and committed that list.
+    required: false
+    default: "false"
+  integration-id:
+    description: Stripe integration the plan mapping evidence belongs to. Required when plan-sources is true.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -65,3 +77,28 @@ runs:
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, check.summary + "\n");
           console.log(check.title);
         '
+
+    - name: Hand off plan and pricing sources
+      # Staged evidence is reviewed by a human, so only the default branch
+      # produces it. A pull request would stage an import per commit.
+      if: inputs.plan-sources == 'true' && github.event_name != 'pull_request'
+      shell: bash
+      env:
+        SAASFUNNELS_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -euo pipefail
+        if [ ! -f .saasfunnels/plan-sources.json ]; then
+          echo "plan-sources is on but .saasfunnels/plan-sources.json is not committed."
+          echo "Run 'saasfunnels plans discover --apply' locally, review the list, and commit it."
+          exit 1
+        fi
+        if [ -z "${{ inputs.integration-id }}" ]; then
+          echo "plan-sources is on but integration-id was not set."
+          exit 1
+        fi
+        npx --yes "saasfunnels@${{ inputs.cli-version }}" plans handoff \
+          --integration-id "${{ inputs.integration-id }}" \
+          --repository-key "github.com/${GITHUB_REPOSITORY}" \
+          --repository-revision "${GITHUB_REF_NAME}@${GITHUB_SHA}" \
+          --api-base-url "${{ inputs.api-base-url }}" \
+          --send
