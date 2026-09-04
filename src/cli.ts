@@ -191,6 +191,7 @@ Usage:
   ${SAASFUNNELS_CLI_NAME} features handoff [--file <path>] --repository-revision <revision> --repository-key <key> [--discovery-roots <paths>] [--scan-role series|candidate] [--producer cli|github_action|github_app] [--send] [--json]
   ${SAASFUNNELS_CLI_NAME} plans discover [--root <paths>] [--exclude <paths>] [--apply] [--json]
   ${SAASFUNNELS_CLI_NAME} plans branches --plans <names> [--root <paths>] [--json]
+  ${SAASFUNNELS_CLI_NAME} plans branches --plans <names> --repository-key <repo> --repository-revision <sha> --send
   ${SAASFUNNELS_CLI_NAME} plans handoff --repository-key <key> --repository-revision <rev> --integration-id <uuid> [--send] [--json]
   ${SAASFUNNELS_CLI_NAME} catalog discover [feature setup options]
   ${SAASFUNNELS_CLI_NAME} catalog validate [file] [--json]
@@ -1121,6 +1122,76 @@ async function commandPlans(
     lines.push("");
     lines.push("Each group is one place your product differs by plan. Naming what");
     lines.push("each one gates is a review step; nothing is guessed here.");
+
+    if (!hasFlag(flags, "send")) {
+      lines.push("");
+      lines.push("Add --send to hand these to your workspace for review.");
+      return result(0, `${lines.join("\n")}\n`, "");
+    }
+
+    const repositoryKey = flagString(flags, "repository-key");
+    if (!repositoryKey)
+      return result(2, "", "Missing --repository-key for the plan branch handoff.\n");
+    const repositoryRevision = flagString(flags, "repository-revision");
+    if (!repositoryRevision)
+      return result(2, "", "Missing --repository-revision for the plan branch handoff.\n");
+    const key = envValue(options, SAASFUNNELS_ENV.apiKey);
+    if (!key)
+      return result(2, "", "Missing SAASFUNNELS_API_KEY with features:write for --send.\n");
+
+    // Only the facts: plan values, file:line, and the enclosing symbol. The
+    // excerpt an assisted pass would need never leaves the machine on this path,
+    // which is why it needs no approval file.
+    const payload = {
+      clusters: clusters.map((cluster) => ({
+        branchCount: cluster.branches.length,
+        branches: cluster.branches.map((branch) => ({
+          line: branch.line,
+          planValue: branch.planValue,
+          polarity: branch.polarity,
+          repositoryPath: branch.repositoryPath,
+          shape: branch.shape,
+          symbol: branch.symbol,
+        })),
+        location: cluster.location,
+        planValues: cluster.planValues,
+        polarity: cluster.polarity,
+        shape: cluster.shape,
+      })),
+      environment: flagString(flags, "environment") ?? "test",
+      planValues,
+      producer: flagString(flags, "producer") ?? "cli",
+      repositoryKey,
+      repositoryRevision,
+      schemaVersion: 1,
+    };
+
+    const response = await (options.fetch ?? fetch)(
+      `${apiBaseUrl(options, flags)}/api/developer-tools/plans/branches`,
+      {
+        body: JSON.stringify(payload),
+        headers: {
+          authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      },
+    );
+    const body = (await response.json()) as {
+      data?: { clusterCount?: number; retainedReviews?: number; reviewUrl?: string };
+      error?: string;
+    };
+    if (!response.ok)
+      return result(1, "", `${body.error ?? "The plan branch handoff failed."}\n`);
+    if (jsonMode(flags)) return jsonResult(0, body.data ?? {});
+
+    lines.push("");
+    lines.push(`Sent ${body.data?.clusterCount ?? clusters.length} group(s) for review.`);
+    if (body.data?.retainedReviews)
+      lines.push(
+        `${body.data.retainedReviews} already reviewed and left as answered.`,
+      );
+    if (body.data?.reviewUrl) lines.push(body.data.reviewUrl);
     return result(0, `${lines.join("\n")}\n`, "");
   }
   if (args[0] === "discover") {

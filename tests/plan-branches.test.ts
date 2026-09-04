@@ -239,3 +239,89 @@ describe("output redaction", () => {
     expect(result.stderr + result.stdout).not.toContain("9f2a7c4b8e1d6a35f0c9b2e7");
   });
 });
+
+describe("plan branch handoff", () => {
+  const scanned = {
+    "src/billing/gate.ts":
+      'if (plan === "free") {\n  throw new Error("upgrade");\n}\n',
+  };
+
+  it("sends plan values, file:line and symbol, and never source", async () => {
+    const cwd = await fixture(scanned);
+    let sent: any;
+    const result = await runSaaSFunnelsCli(
+      [
+        "plans", "branches", "--plans", "free,pro",
+        "--repository-key", "github.com/acme/app",
+        "--repository-revision", "main@abc123",
+        "--send",
+      ],
+      {
+        cwd,
+        env: { SAASFUNNELS_API_KEY: "pv_test_key" },
+        fetch: async (_url: string, init: any) => {
+          sent = JSON.parse(init.body);
+          return {
+            json: async () => ({ data: { clusterCount: 1, reviewUrl: "/review" }, ok: true }),
+            ok: true,
+          };
+        },
+      } as any,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(sent.schemaVersion).toBe(1);
+    expect(sent.producer).toBe("cli");
+    const [cluster] = sent.clusters;
+    expect(cluster.location).toBe("src/billing");
+    expect(cluster.branches[0]).toMatchObject({
+      line: 1,
+      planValue: "free",
+      repositoryPath: "src/billing/gate.ts",
+    });
+    // The whole reason this path needs no approval file.
+    const serialized = JSON.stringify(sent);
+    for (const forbidden of ["sourceCode", "snippet", "rawSource", '"source"', '"content"']) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(serialized).not.toContain("throw new Error");
+  });
+
+  it("refuses to send without a key or a revision", async () => {
+    const cwd = await fixture(scanned);
+    const noRevision = await runSaaSFunnelsCli(
+      ["plans", "branches", "--plans", "free", "--repository-key", "r", "--send"],
+      { cwd, env: { SAASFUNNELS_API_KEY: "pv_test_key" } } as any,
+    );
+    expect(noRevision.exitCode).toBe(2);
+    expect(noRevision.stderr).toContain("--repository-revision");
+
+    const noKey = await runSaaSFunnelsCli(
+      [
+        "plans", "branches", "--plans", "free",
+        "--repository-key", "r", "--repository-revision", "s", "--send",
+      ],
+      { cwd, env: {} } as any,
+    );
+    expect(noKey.exitCode).toBe(2);
+    expect(noKey.stderr).toContain("features:write");
+  });
+
+  it("sends nothing without --send", async () => {
+    const cwd = await fixture(scanned);
+    let called = false;
+    const result = await runSaaSFunnelsCli(
+      ["plans", "branches", "--plans", "free"],
+      {
+        cwd,
+        env: { SAASFUNNELS_API_KEY: "pv_test_key" },
+        fetch: async () => {
+          called = true;
+          return { json: async () => ({}), ok: true };
+        },
+      } as any,
+    );
+    expect(called).toBe(false);
+    expect(result.stdout).toContain("--send");
+  });
+});
