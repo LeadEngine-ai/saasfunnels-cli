@@ -37,8 +37,12 @@ const planComparison =
 const planIdentifier = /(^|\.)(plan|tier|level|subscription|package)s?$/i;
 
 const codeFile = /\.(?:[cm]?[jt]sx?)$/;
+// Mirrors nonDefinitionPattern in src/plan-sources.ts. Test doubles are
+// excluded from ground truth as well as from discovery: a mock Stripe webhook
+// payload carries a price identifier but is not a pricing definition, so
+// counting it as a missed file would penalise correct behaviour.
 const skipDirectory =
-  /^(?:\.git|node_modules|dist|build|out|coverage|vendor|target|__snapshots__)$|^\.next/;
+  /^(?:\.git|node_modules|dist|build|out|coverage|vendor|target|__snapshots__|__mocks__|__tests__|tests?|specs?|fixtures?|__fixtures__)$|^\.next/;
 const skipFile = /\.(?:test|spec|d)\.[cm]?[jt]sx?$|\.min\.js$/;
 
 async function walk(root) {
@@ -205,7 +209,7 @@ async function main() {
   );
   lines.push("");
   lines.push(
-    "**Recall is measured against files containing a literal Stripe price identifier.** That is the strongest available ground truth, and it is approximate: a pricing file that reads its price identifiers from environment variables is invisible to it, and would be counted as neither found nor missed.",
+    "**Recall is measured against files containing a literal Stripe price identifier**, excluding test doubles. That is the strongest available ground truth, and it is approximate in two directions: a pricing file that reads its identifiers from environment variables is invisible to it, and a fixture carrying a price identifier is not a pricing definition, so mock and test directories are excluded from ground truth exactly as they are from discovery.",
   );
   lines.push("");
   lines.push("## Plan source discovery (LEA-1141)");

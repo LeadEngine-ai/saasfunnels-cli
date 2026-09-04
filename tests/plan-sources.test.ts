@@ -35,6 +35,23 @@ const plansFile = `export const PLANS = {
 `;
 
 describe("plan source discovery", () => {
+  it("proposes a file carrying a Stripe price whatever it is called", async () => {
+    // Real pricing lives in files like papermark's `ee/stripe/utils.ts`, which
+    // no filename list would match. The price identifier has to be enough.
+    const cwd = await fixture({
+      "ee/stripe/utils.ts": plansFile,
+      "src/helpers.ts": "export const noop = () => {};\n",
+    });
+
+    const candidates = await discoverPlanSourceCandidates({ cwd });
+
+    expect(candidates.map((candidate) => candidate.path)).toEqual([
+      "ee/stripe/utils.ts",
+    ]);
+    expect(candidates[0]?.hasStripePriceId).toBe(true);
+    expect(candidates[0]?.rationale).toBe("The file references a Stripe price.");
+  });
+
   it("finds a pricing definition and ranks a Stripe price highest", async () => {
     const cwd = await fixture({
       "src/plans.ts": plansFile,

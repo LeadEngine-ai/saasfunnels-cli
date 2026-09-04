@@ -146,16 +146,19 @@ export async function discoverPlanSourceCandidates(input: {
     }
     if (!entryStat.isFile()) continue;
     const kind = planSourceKindByExtension.get(extname(current).toLowerCase());
-    if (!kind || !relativePath || !looksLikePlanSource(relativePath)) continue;
+    if (!kind || !relativePath) continue;
     if (entryStat.size > maxPlanSourceCharacters) continue;
 
     const contents = await readFile(current, "utf8");
     const hasStripePriceId = stripePriceIdPattern.test(contents);
-    // Without a Stripe price to anchor on, a filename is only a guess, so the
-    // contents have to look like a price table before it is worth proposing.
+    const named = looksLikePlanSource(relativePath);
+    // A Stripe price identifier is stronger evidence than any filename, so it
+    // proposes a file on its own. Filenames narrow what is worth a second
+    // look; they do not decide what is eligible. Real pricing lives in files
+    // named things like `ee/stripe/utils.ts`, which no stem list would match.
     const looksPriced =
       billingIntervalPattern.test(contents) && chargeAmountPattern.test(contents);
-    if (!hasStripePriceId && !looksPriced) continue;
+    if (!hasStripePriceId && !(named && looksPriced)) continue;
     candidates.push({
       characters: contents.length,
       confidenceBasisPoints: hasStripePriceId ? 9_000 : 4_000,
@@ -163,7 +166,9 @@ export async function discoverPlanSourceCandidates(input: {
       kind,
       path: relativePath,
       rationale: hasStripePriceId
-        ? "Filename suggests commercial configuration and the file references a Stripe price."
+        ? named
+          ? "Filename suggests commercial configuration and the file references a Stripe price."
+          : "The file references a Stripe price."
         : "Filename suggests commercial configuration and the file states amounts and billing intervals.",
     });
   }
