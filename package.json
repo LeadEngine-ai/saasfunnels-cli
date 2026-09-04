@@ -57,7 +57,8 @@
     "verify:metadata": "node scripts/verify-package-metadata.mjs",
     "verify:pack": "node scripts/verify-pack.mjs",
     "verify:installed": "node scripts/smoke-installed-package.mjs",
-    "release:verify": "npm run typecheck && npm test && npm run security:secrets && npm run security:audit && npm run verify:metadata && npm run verify:pack && npm run verify:installed"
+    "release:verify": "npm run typecheck && npm test && npm run security:secrets && npm run security:audit && npm run verify:metadata && npm run verify:pack && npm run verify:installed",
+    "eval": "node eval/run.mjs"
   },
   "devDependencies": {
     "@npmcli/package-json": "7.0.5",
