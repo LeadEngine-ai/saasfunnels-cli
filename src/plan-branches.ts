@@ -61,7 +61,20 @@ const restrictionNamePattern =
 // rather than a boolean one.
 const numericBranchPattern = /\?\s*[\d_]+\s*:\s*[\d_]+|:\s*[\d_]+\s*[,;)]/;
 
+// Pricing tables, upgrade banners, and plan badges branch on plan constantly,
+// and none of it gates anything — they are the surfaces that *sell* plans. They
+// were the largest source of disagreement between static and assisted reads,
+// because static saw "upgrade" and called it denial while the model saw nothing
+// being withheld and called it a grant. Both were wrong: it is not a mapping.
+const renderPattern = /<[A-Z][\w.]*|className=|return\s*\(/;
+const marketingPattern =
+  /\b(?:upgrade|get started|contact sales|choose|current plan|most popular|per month|per year|\/mo\b|\/yr\b)|\$\{?\d/i;
+// Control flow that leaves the branch: the mark of a gate rather than a label.
+const escapePattern =
+  /\breturn\s+(?:null|false|undefined)\b|\bthrow\b|\bredirect\b|\bnotFound\b/;
+
 export type PlanBranchPolarity = "deny" | "grant" | "unclear";
+export type PlanBranchShape = "boolean" | "limit" | "presentation";
 
 // `Enum.MEMBER` and `CONST` to their string values. A name bound to two
 // different values anywhere in the tree is dropped rather than guessed at.
@@ -122,7 +135,7 @@ export type PlanBranch = {
   planValue: string;
   polarity: PlanBranchPolarity;
   repositoryPath: string;
-  shape: "boolean" | "limit";
+  shape: PlanBranchShape;
   symbol: string;
 };
 
@@ -131,7 +144,7 @@ export type PlanBranchCluster = {
   location: string;
   planValues: string[];
   polarity: PlanBranchPolarity;
-  shape: "boolean" | "limit";
+  shape: PlanBranchShape;
 };
 
 function normalize(path: string) {
@@ -158,6 +171,41 @@ function nearestSymbol(lines: string[], lineIndex: number) {
   return "module";
 }
 
+function assignedName(line: string) {
+  return line.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/)?.[1] ?? null;
+}
+
+/**
+ * Where a comparison is bound to a name, the lines that later read that name.
+ * `const isProPlan = planKey === PRO` says nothing on its own; what the code
+ * does with `isProPlan` is the whole answer, and it is usually elsewhere.
+ */
+function bindingUsages(lines: readonly string[], lineIndex: number, name: string) {
+  const reference = new RegExp(`\\b${name}\\b`);
+  const usages: string[] = [];
+  lines.forEach((line, index) => {
+    if (index === lineIndex || !reference.test(line)) return;
+    usages.push(line);
+  });
+  return usages.join("\n");
+}
+
+function shapeAt(lines: readonly string[], lineIndex: number): PlanBranchShape {
+  const line = lines[lineIndex] ?? "";
+  const window = lines.slice(lineIndex, lineIndex + 4).join("\n");
+  if (numericBranchPattern.test(line)) return "limit";
+  // A branch that renders marketing copy and never escapes is choosing what to
+  // show, not what to allow.
+  if (
+    renderPattern.test(window) &&
+    marketingPattern.test(window) &&
+    !escapePattern.test(window)
+  ) {
+    return "presentation";
+  }
+  return "boolean";
+}
+
 function polarityAt(
   lines: string[],
   lineIndex: number,
@@ -165,11 +213,14 @@ function polarityAt(
 ): PlanBranchPolarity {
   // The consequent usually sits on the comparison's own line or just below it.
   const window = lines.slice(lineIndex, lineIndex + 3).join("\n");
-  const assignedName = lines[lineIndex]?.match(
-    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/,
-  )?.[1];
-  const named = assignedName ? restrictionNamePattern.test(assignedName) : false;
-  if (!named && !denialPattern.test(window)) return "unclear";
+  const bound = assignedName(lines[lineIndex] ?? "");
+  const named = bound ? restrictionNamePattern.test(bound) : false;
+  // Following the binding is what reaches codebases that never write the
+  // decision inline — twenty and unkey resolved nothing without it.
+  const usages = bound ? bindingUsages(lines, lineIndex, bound) : "";
+  if (!named && !denialPattern.test(window) && !denialPattern.test(usages)) {
+    return "unclear";
+  }
   // `plan !== "free"` guarding a bail-out denies everyone *except* free, which
   // is the opposite reading, and not one to assert from three lines of text.
   return negated ? "unclear" : "deny";
@@ -281,7 +332,7 @@ export async function discoverPlanBranches(input: {
           polarity: polarityAt(lines, lineIndex, operator!.startsWith("!")),
           reference: reference ?? null,
           repositoryPath: relativePath,
-          shape: numericBranchPattern.test(line) ? "limit" : "boolean",
+          shape: shapeAt(lines, lineIndex),
           symbol: nearestSymbol(lines, lineIndex),
         });
       }
