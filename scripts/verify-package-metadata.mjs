@@ -15,6 +15,13 @@ const expectedBin = { saasfunnels: "dist/saasfunnels.js" };
 export async function verifyPackageMetadata(packageRoot) {
   const manifestPath = join(packageRoot, "package.json");
   const sourceManifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const identitySource = await readFile(join(packageRoot, "src/identity.ts"), "utf8");
+  const declaredVersion = identitySource.match(/SAASFUNNELS_CLI_VERSION\s*=\s*"([^"]+)"/);
+  if (declaredVersion?.[1] !== sourceManifest.version) {
+    throw new Error(
+      `CLI identity version must match package.json: expected ${sourceManifest.version}; received ${declaredVersion?.[1] ?? "missing"}`,
+    );
+  }
   const workspace = await mkdtemp(join(tmpdir(), "saasfunnels-metadata-"));
 
   try {

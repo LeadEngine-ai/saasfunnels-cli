@@ -61,7 +61,7 @@ try {
       [
         'import { hostedSaaSFunnelsMcpToolDefinitions, SAASFUNNELS_CLI_VERSION } from "saasfunnels/library";',
         "const tools = hostedSaaSFunnelsMcpToolDefinitions();",
-        'if (SAASFUNNELS_CLI_VERSION !== "0.1.0-beta.1") throw new Error("Unexpected library version");',
+        'if (SAASFUNNELS_CLI_VERSION !== "0.2.1") throw new Error("Unexpected library version");',
         'if (!tools.length || tools.some((tool) => tool.annotations?.readOnlyHint === false)) throw new Error("Unsafe hosted library registry");',
         'process.stdout.write(JSON.stringify({ library: "passed", tools: tools.length }));',
       ].join(" "),
