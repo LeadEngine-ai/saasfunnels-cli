@@ -1,7 +1,9 @@
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
+  callSaaSFunnelsMcpTool,
   handleSaaSFunnelsMcpMessage,
+  hostedSaaSFunnelsMcpToolDefinitions,
   SAASFUNNELS_MCP_PROTOCOL_VERSION,
   saasFunnelsMcpResources,
   saasFunnelsMcpToolDefinitions,
@@ -42,6 +44,93 @@ async function toolCall(
 }
 
 describe("SaaSFunnels MCP server", () => {
+  it("exposes workspace selection only on hosted live tools", () => {
+    const local = saasFunnelsMcpToolDefinitions();
+    const hosted = hostedSaaSFunnelsMcpToolDefinitions();
+    expect(local.map((tool) => tool.name)).not.toContain("list_workspaces");
+    expect(hosted.map((tool) => tool.name)).toContain("list_workspaces");
+    for (const name of [
+      "get_integration_health",
+      "get_workspace_readiness",
+      "list_mapping_gaps",
+      "list_recent_signals",
+      "get_signal_payload_preview",
+      "inspect_funnel_entry",
+      "propose_funnel_entry_installation",
+      "get_account_strategy",
+      "simulate_account_funnel_fit",
+    ]) {
+      const hostedTool = hosted.find((tool) => tool.name === name)!;
+      expect((hostedTool.inputSchema.properties as any).workspace_id).toMatchObject({
+        type: "string",
+      });
+      const localTool = local.find((tool) => tool.name === name);
+      if (localTool) {
+        expect((localTool.inputSchema.properties as any).workspace_id).toBeUndefined();
+      }
+    }
+    expect((hosted.find((tool) => tool.name === "list_workspaces")!.inputSchema.properties as any).workspace_id).toBeUndefined();
+    expect(hosted.some((tool) => tool.annotations?.readOnlyHint === false)).toBe(false);
+  });
+
+  it("discovers hosted workspaces and forwards an explicit workspace ID for live calls", async () => {
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      calls.push(String(url));
+      return response({
+        data: { workspaces: [{ id: workspaceId, name: "Sales Ops" }] },
+        ok: true,
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+
+    const discovered = await callSaaSFunnelsMcpTool("list_workspaces", {}, options);
+    const readiness = await callSaaSFunnelsMcpTool(
+      "get_workspace_readiness",
+      { workspace_id: workspaceId },
+      options,
+    );
+    const plan = await callSaaSFunnelsMcpTool(
+      "propose_funnel_entry_installation",
+      {
+        entry_kind: "event",
+        funnel_id: "funnel-1",
+        intent: "onboarding",
+        workspace_id: workspaceId,
+      },
+      options,
+    );
+
+    expect(calls).toEqual([
+      "https://app.saasfunnels.test/api/developer-tools/workspaces",
+      `https://app.saasfunnels.test/api/developer-tools/signals/readiness?workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/funnels/funnel-1/entry/plan?workspace_id=${workspaceId}`,
+    ]);
+    expect(discovered.structuredContent).toMatchObject({
+      data: { workspaces: [{ id: workspaceId, name: "Sales Ops" }] },
+    });
+    expect(readiness.structuredContent).toMatchObject({ ok: true });
+    expect(plan.structuredContent).toMatchObject({ ok: true });
+  });
+
+  it("keeps local API-key calls pinned to the key workspace", async () => {
+    const fetchImpl = vi.fn(async () => response({ ok: true })) as unknown as typeof fetch;
+    const result = await toolCall(
+      "get_workspace_readiness",
+      { workspace_id: "11111111-1111-4111-8111-111111111111" },
+      { env: { SAASFUNNELS_API_KEY: rawDeveloperKey }, fetch: fetchImpl },
+    );
+    expect(result?.error).toMatchObject({ code: -32602 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const discovery = await toolCall("list_workspaces", {});
+    expect((discovery?.result as any).isError).toBe(true);
+  });
   it("negotiates initialize and lists read-only tools/resources by default", async () => {
     const initialized = await handleSaaSFunnelsMcpMessage({
       id: 1,
