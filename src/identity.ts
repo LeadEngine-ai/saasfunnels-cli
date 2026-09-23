@@ -1,5 +1,5 @@
 export const SAASFUNNELS_CLI_NAME = "saasfunnels";
-export const SAASFUNNELS_CLI_VERSION = "0.2.2";
+export const SAASFUNNELS_CLI_VERSION = "0.2.3";
 export const SAASFUNNELS_PRODUCT_NAME = "SaaSFunnels";
 
 // Explicit base URLs keep the same command implementation testable against

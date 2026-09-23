@@ -75,6 +75,8 @@ The application imports the exact versioned MCP registry through the server-side
 
 In hosted OAuth, `list_workspaces` discovers accessible workspace names and IDs. Live read, inspect, and plan tools accept an optional `workspace_id`. The hosted application must select the sole accessible workspace automatically, require an explicit ID when several are accessible, recheck authorization for every call, and include the selected workspace name and ID in each live response. The application passes the selection through to its developer API as the `workspace_id` query parameter. Local stdio API-key tools do not expose workspace selection; their key stays pinned to its workspace.
 
+For Funnel discovery, hosted MCP offers `list_funnels` and `get_funnel_state`. `list_funnels` returns at most 50 summaries per page; follow `page.hasMore` with the next `offset` to cover the workspace. The app returns the selected workspace and evaluation time with each read. `get_funnel_state` reports the current lifecycle and publication readiness for one Funnel. These reads do not include Funnel definitions, customer data, or Results. Signals remain supporting evidence and enrollment inputs.
+
 ## Development
 
 ```bash

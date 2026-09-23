@@ -72,10 +72,12 @@ export const saasFunnelsMcpToolCapabilityIds = {
   apply_funnel_entry: "funnel.entry.apply",
   generate_direct_api_handoff: "developer.handoff.generate",
   get_integration_health: "developer.workspace.read",
+  get_funnel_state: "funnel.workspace.read",
   get_signal_payload_preview: "developer.workspace.read",
   get_workspace_readiness: "developer.workspace.read",
   list_workspaces: "developer.workspace.read",
   inspect_funnel_entry: "funnel.entry.inspect",
+  list_funnels: "funnel.workspace.read",
   list_mapping_gaps: "developer.workspace.read",
   list_recent_signals: "developer.workspace.read",
   simulate_account_funnel_fit: "account.funnel_fit.simulate",
@@ -533,11 +535,13 @@ function emptyLiveInputSchema() {
 
 const hostedWorkspaceToolNames = new Set([
   "get_integration_health",
+  "get_funnel_state",
   "get_workspace_readiness",
   "list_mapping_gaps",
   "list_recent_signals",
   "get_signal_payload_preview",
   "inspect_funnel_entry",
+  "list_funnels",
   "propose_funnel_entry_installation",
   "get_account_strategy",
   "simulate_account_funnel_fit",
@@ -768,6 +772,45 @@ export function saasFunnelsMcpToolDefinitions({
   ];
 
   if (includeHostedAccountTools) {
+    tools.push({
+      annotations: {
+        idempotentHint: true,
+        openWorldHint: true,
+        readOnlyHint: true,
+      },
+      description:
+        "List one selected workspace's Funnels with lifecycle, draft, and publication state. Results include evaluation time, total count, and pagination; use offset to read more pages. No Funnel definitions or customer data.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          include_archived: { type: "boolean" },
+          limit: { type: "integer", minimum: 1, maximum: 50 },
+          offset: { type: "integer", minimum: 0 },
+        },
+        type: "object",
+      },
+      name: "list_funnels",
+      title: "List Funnels",
+    });
+    tools.push({
+      annotations: {
+        idempotentHint: true,
+        openWorldHint: true,
+        readOnlyHint: true,
+      },
+      description:
+        "Read one Funnel's current lifecycle, draft and published revisions, and server-derived publication readiness in the selected workspace. No definitions or private evidence.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          funnel_id: { type: "string", format: "uuid" },
+        },
+        required: ["funnel_id"],
+        type: "object",
+      },
+      name: "get_funnel_state",
+      title: "Get Funnel State",
+    });
     tools.push({
       annotations: {
         idempotentHint: true,
@@ -1159,6 +1202,8 @@ export async function callSaaSFunnelsMcpTool(
     }
     if (
       (name === "get_account_strategy" ||
+        name === "get_funnel_state" ||
+        name === "list_funnels" ||
         name === "simulate_account_funnel_fit" ||
         name === "list_workspaces") &&
       !options.hostedMode
@@ -1221,6 +1266,49 @@ export async function callSaaSFunnelsMcpTool(
       return structuredToolResult(
         await developerGet("/api/developer-tools/workspaces", {}, options),
       );
+    if (name === "list_funnels") {
+      const limit = args.limit ?? 25;
+      const offset = args.offset ?? 0;
+      if (
+        !Number.isInteger(limit) ||
+        Number(limit) < 1 ||
+        Number(limit) > 50 ||
+        !Number.isInteger(offset) ||
+        Number(offset) < 0 ||
+        Number(offset) > 250_000 ||
+        (args.include_archived !== undefined &&
+          typeof args.include_archived !== "boolean")
+      ) {
+        throw new McpProtocolError(
+          -32602,
+          "limit must be 1–50, offset must be 0–250000, and include_archived must be boolean.",
+        );
+      }
+      const query = new URLSearchParams({
+        include_archived: String(args.include_archived === true),
+        limit: String(limit),
+        offset: String(offset),
+      });
+      return structuredToolResult(
+        await developerGet(`/api/developer-tools/funnels?${query}`, args, options),
+      );
+    }
+    if (name === "get_funnel_state") {
+      const funnelId = stringArg(args, "funnel_id");
+      if (
+        !funnelId ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(funnelId)
+      ) {
+        throw new McpProtocolError(-32602, "funnel_id must be a UUID.");
+      }
+      return structuredToolResult(
+        await developerGet(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}`,
+          args,
+          options,
+        ),
+      );
+    }
     if (name === "get_workspace_readiness")
       return structuredToolResult(
         await developerGet(
