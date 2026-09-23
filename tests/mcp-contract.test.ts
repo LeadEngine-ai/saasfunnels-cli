@@ -51,13 +51,19 @@ describe("SaaSFunnels MCP server", () => {
     expect(hosted.map((tool) => tool.name)).toContain("list_workspaces");
     for (const name of [
       "get_integration_health",
+      "get_funnel_results",
       "get_funnel_state",
+      "get_lead",
+      "get_opportunity",
+      "get_portfolio_results",
       "get_workspace_readiness",
       "list_mapping_gaps",
       "list_recent_signals",
       "get_signal_payload_preview",
       "inspect_funnel_entry",
       "list_funnels",
+      "list_leads",
+      "list_opportunities",
       "propose_funnel_entry_installation",
       "get_account_strategy",
       "simulate_account_funnel_fit",
@@ -187,6 +193,102 @@ describe("SaaSFunnels MCP server", () => {
     const local = await toolCall("list_funnels", {}, { env: { SAASFUNNELS_API_KEY: rawDeveloperKey }, fetch: fetchImpl });
     expect((local?.result as any).isError).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("routes Results, Opportunity, and Lead reads through hosted workspace selection", async () => {
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
+    const funnelId = "22222222-2222-4222-8222-222222222222";
+    const itemId = "33333333-3333-4333-8333-333333333333";
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      return response({
+        ok: true,
+        data: { workspace_id: workspaceId, data_status: "live", evaluated_at: "2026-09-23T00:00:00Z" },
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["get_portfolio_results", { workspace_id: workspaceId, window: "90d", funnel_id: funnelId, objective: "grow", attribution_role: "direct", limit: 50, offset: 25 }],
+      ["get_funnel_results", { workspace_id: workspaceId, funnel_id: funnelId, window: "7d" }],
+      ["list_opportunities", { workspace_id: workspaceId, funnel_id: funnelId, state: "detected", limit: 50, offset: 75 }],
+      ["get_opportunity", { workspace_id: workspaceId, opportunity_id: itemId }],
+      ["list_leads", { workspace_id: workspaceId, funnel_id: funnelId, state: "new", limit: 50, offset: 100 }],
+      ["get_lead", { workspace_id: workspaceId, lead_id: itemId }],
+    ];
+    for (const [name, args] of calls) {
+      const result = await callSaaSFunnelsMcpTool(name, args, options);
+      expect(result.structuredContent).toMatchObject({ ok: true, data: { workspace_id: workspaceId } });
+    }
+    expect(urls).toEqual([
+      `https://app.saasfunnels.test/api/developer-tools/results?window=90d&limit=50&offset=25&funnel_id=${funnelId}&objective=grow&attribution_role=direct&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/funnels/${funnelId}/results?window=7d&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/opportunities?limit=50&offset=75&funnel_id=${funnelId}&state=detected&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/opportunities/${itemId}?workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/leads?limit=50&offset=100&funnel_id=${funnelId}&state=new&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/leads/${itemId}?workspace_id=${workspaceId}`,
+    ]);
+  });
+
+  it("rejects invalid read filters and local access without fetching", async () => {
+    const fetchImpl = vi.fn(async () => response({ ok: true })) as unknown as typeof fetch;
+    const hosted = { authorizationHeader: "Bearer hosted-oauth", fetch: fetchImpl, hostedMode: true };
+    for (const [name, args] of [
+      ["get_portfolio_results", { window: "forever" }],
+      ["get_portfolio_results", { offset: 101 }],
+      ["get_portfolio_results", { objective: "other" }],
+      ["get_portfolio_results", { attribution_role: "primary" }],
+      ["get_funnel_results", { funnel_id: "other" }],
+      ["list_opportunities", { limit: 51 }],
+      ["list_opportunities", { state: "unknown" }],
+      ["list_leads", { offset: -1 }],
+      ["list_leads", { state: "unknown" }],
+      ["get_opportunity", { opportunity_id: "other" }],
+      ["get_lead", { lead_id: "other" }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      const result = await toolCall(name, args, hosted);
+      expect(result?.error).toMatchObject({ code: -32602 });
+    }
+    for (const name of ["get_portfolio_results", "get_funnel_results", "list_opportunities", "get_opportunity", "list_leads", "get_lead"]) {
+      const result = await toolCall(name, {}, { env: { SAASFUNNELS_API_KEY: rawDeveloperKey }, fetch: fetchImpl });
+      expect((result?.result as any).isError).toBe(true);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps default windows, empty pages, and backend failures explicit", async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      if (String(url).includes("/opportunities")) {
+        return response({ ok: false, error: "reporting unavailable" }, 503);
+      }
+      return response({
+        ok: true,
+        data: { data_status: "live", leads: [], lead: null, page: { total_count: 0, has_more: false } },
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+    await callSaaSFunnelsMcpTool("get_portfolio_results", {}, options);
+    const empty = await callSaaSFunnelsMcpTool("list_leads", {}, options);
+    const unavailable = await callSaaSFunnelsMcpTool("list_opportunities", {}, options);
+    expect(urls).toEqual([
+      "https://app.saasfunnels.test/api/developer-tools/results?window=30d&limit=50&offset=0",
+      "https://app.saasfunnels.test/api/developer-tools/leads?limit=25&offset=0",
+      "https://app.saasfunnels.test/api/developer-tools/opportunities?limit=25&offset=0",
+    ]);
+    expect(empty.structuredContent).toMatchObject({ data: { leads: [], page: { total_count: 0, has_more: false } } });
+    expect(unavailable).toMatchObject({ isError: true, structuredContent: { status: 503, ok: false } });
   });
   it("negotiates initialize and lists read-only tools/resources by default", async () => {
     const initialized = await handleSaaSFunnelsMcpMessage({
