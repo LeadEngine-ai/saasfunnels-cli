@@ -72,13 +72,19 @@ export const saasFunnelsMcpToolCapabilityIds = {
   apply_funnel_entry: "funnel.entry.apply",
   generate_direct_api_handoff: "developer.handoff.generate",
   get_integration_health: "developer.workspace.read",
+  get_funnel_results: "funnel.workspace.read",
   get_funnel_state: "funnel.workspace.read",
+  get_lead: "funnel.workspace.read",
+  get_opportunity: "funnel.workspace.read",
+  get_portfolio_results: "funnel.workspace.read",
   get_signal_payload_preview: "developer.workspace.read",
   get_workspace_readiness: "developer.workspace.read",
   list_workspaces: "developer.workspace.read",
   inspect_funnel_entry: "funnel.entry.inspect",
   list_funnels: "funnel.workspace.read",
+  list_leads: "funnel.workspace.read",
   list_mapping_gaps: "developer.workspace.read",
+  list_opportunities: "funnel.workspace.read",
   list_recent_signals: "developer.workspace.read",
   simulate_account_funnel_fit: "account.funnel_fit.simulate",
   propose_funnel_entry_installation: "funnel.entry.plan",
@@ -194,6 +200,49 @@ function parseArgs(value: unknown): JsonObject {
 function stringArg(args: JsonObject, name: string) {
   const value = args[name];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const resultsWindows = ["7d", "30d", "90d", "12m"] as const;
+const attributionRoles = ["direct", "influenced", "observed"] as const;
+const opportunityStates = ["detected", "open", "eligible", "queued", "presented", "engaged", "action_pending", "converted", "dismissed", "suppressed", "expired", "failed"] as const;
+const leadStates = ["new", "working", "qualified", "converted", "disqualified", "withdrawn", "deleted"] as const;
+
+function uuidArg(args: JsonObject, name: string, required: true): string;
+function uuidArg(args: JsonObject, name: string, required?: false): string | undefined;
+function uuidArg(args: JsonObject, name: string, required = false) {
+  const value = args[name];
+  if (value === undefined && !required) return undefined;
+  const parsed = stringArg(args, name);
+  if (!parsed || !uuidPattern.test(parsed)) {
+    throw new McpProtocolError(-32602, `${name} must be a UUID.`);
+  }
+  return parsed;
+}
+
+function integerArg(args: JsonObject, name: string, fallback: number, max: number) {
+  const value = args[name] ?? fallback;
+  if (!Number.isInteger(value) || Number(value) < (name === "limit" ? 1 : 0) || Number(value) > max) {
+    throw new McpProtocolError(-32602, `${name} must be an integer from ${name === "limit" ? 1 : 0} to ${max}.`);
+  }
+  return Number(value);
+}
+
+function optionalFilterArg(args: JsonObject, name: string) {
+  if (args[name] === undefined) return undefined;
+  const value = stringArg(args, name);
+  if (!value || value.length > 80) {
+    throw new McpProtocolError(-32602, `${name} must be a non-empty string of at most 80 characters.`);
+  }
+  return value;
+}
+
+function resultsWindowArg(args: JsonObject) {
+  const value = args.window ?? "30d";
+  if (typeof value !== "string" || !resultsWindows.includes(value as typeof resultsWindows[number])) {
+    throw new McpProtocolError(-32602, "window must be 7d, 30d, 90d, or 12m.");
+  }
+  return value;
 }
 
 function sourceArg(args: JsonObject): DeveloperToolEventSource {
@@ -535,13 +584,19 @@ function emptyLiveInputSchema() {
 
 const hostedWorkspaceToolNames = new Set([
   "get_integration_health",
+  "get_funnel_results",
   "get_funnel_state",
+  "get_lead",
+  "get_opportunity",
+  "get_portfolio_results",
   "get_workspace_readiness",
   "list_mapping_gaps",
   "list_recent_signals",
   "get_signal_payload_preview",
   "inspect_funnel_entry",
   "list_funnels",
+  "list_leads",
+  "list_opportunities",
   "propose_funnel_entry_installation",
   "get_account_strategy",
   "simulate_account_funnel_fit",
@@ -772,6 +827,105 @@ export function saasFunnelsMcpToolDefinitions({
   ];
 
   if (includeHostedAccountTools) {
+    const readAnnotations = {
+      idempotentHint: true,
+      openWorldHint: true,
+      readOnlyHint: true,
+    };
+    const windowSchema = { default: "30d", enum: resultsWindows, type: "string" };
+    const uuidSchema = { format: "uuid", type: "string" };
+    tools.push({
+      annotations: readAnnotations,
+      description:
+        "Read bounded portfolio Results for one workspace and reporting window (30d by default). Funnel rows are paged within the first 100; stage counts, acquisition aggregates, and revenue value bases stay distinct. Check page.has_more and funnels_truncated for coverage.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          attribution_role: { enum: attributionRoles, type: "string" },
+          funnel_id: uuidSchema,
+          limit: { type: "integer", minimum: 1, maximum: 50 },
+          objective: { enum: ["convert", "grow", "save"], type: "string" },
+          offset: { type: "integer", minimum: 0, maximum: 100 },
+          window: windowSchema,
+        },
+        type: "object",
+      },
+      name: "get_portfolio_results",
+      title: "Get Portfolio Results",
+    });
+    tools.push({
+      annotations: readAnnotations,
+      description:
+        "Read one Funnel's Results for a reporting window, including stage counts, configured acquisition aggregates, maturity, warnings, and separate revenue rows. Bounded arrays carry truncation flags.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { funnel_id: uuidSchema, window: windowSchema },
+        required: ["funnel_id"],
+        type: "object",
+      },
+      name: "get_funnel_results",
+      title: "Get Funnel Results",
+    });
+    tools.push({
+      annotations: readAnnotations,
+      description:
+        "List up to 50 Opportunities in one workspace, optionally filtered by Funnel or lifecycle state. Returns exact total count and page.has_more; no raw evidence or monetary values.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          funnel_id: uuidSchema,
+          limit: { type: "integer", minimum: 1, maximum: 50 },
+          offset: { type: "integer", minimum: 0, maximum: 250000 },
+          state: { enum: opportunityStates, type: "string" },
+        },
+        type: "object",
+      },
+      name: "list_opportunities",
+      title: "List Opportunities",
+    });
+    tools.push({
+      annotations: readAnnotations,
+      description:
+        "Read one Opportunity's bounded Funnel, account, lifecycle, delivery, and outcome summary in the selected workspace. No private evidence or monetary values.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { opportunity_id: uuidSchema },
+        required: ["opportunity_id"],
+        type: "object",
+      },
+      name: "get_opportunity",
+      title: "Get Opportunity",
+    });
+    tools.push({
+      annotations: readAnnotations,
+      description:
+        "List up to 50 generated Leads in one workspace with source Funnel, lifecycle, delivery, and capture counts. Returns exact total count and page.has_more; no personal identity or raw responses.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          funnel_id: uuidSchema,
+          limit: { type: "integer", minimum: 1, maximum: 50 },
+          offset: { type: "integer", minimum: 0, maximum: 250000 },
+          state: { enum: leadStates, type: "string" },
+        },
+        type: "object",
+      },
+      name: "list_leads",
+      title: "List Leads",
+    });
+    tools.push({
+      annotations: readAnnotations,
+      description:
+        "Read one generated Lead's bounded source, lifecycle, delivery, capture, and verified outcome summary in the selected workspace. No personal identity or raw responses.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { lead_id: uuidSchema },
+        required: ["lead_id"],
+        type: "object",
+      },
+      name: "get_lead",
+      title: "Get Lead",
+    });
     tools.push({
       annotations: {
         idempotentHint: true,
@@ -1202,8 +1356,14 @@ export async function callSaaSFunnelsMcpTool(
     }
     if (
       (name === "get_account_strategy" ||
+        name === "get_funnel_results" ||
         name === "get_funnel_state" ||
+        name === "get_lead" ||
+        name === "get_opportunity" ||
+        name === "get_portfolio_results" ||
         name === "list_funnels" ||
+        name === "list_leads" ||
+        name === "list_opportunities" ||
         name === "simulate_account_funnel_fit" ||
         name === "list_workspaces") &&
       !options.hostedMode
@@ -1294,16 +1454,78 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "get_funnel_state") {
-      const funnelId = stringArg(args, "funnel_id");
-      if (
-        !funnelId ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(funnelId)
-      ) {
-        throw new McpProtocolError(-32602, "funnel_id must be a UUID.");
-      }
+      const funnelId = uuidArg(args, "funnel_id", true);
       return structuredToolResult(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}`,
+          args,
+          options,
+        ),
+      );
+    }
+    if (name === "get_portfolio_results") {
+      const query = new URLSearchParams({
+        window: resultsWindowArg(args),
+        limit: String(integerArg(args, "limit", 50, 50)),
+        offset: String(integerArg(args, "offset", 0, 100)),
+      });
+      const funnelId = uuidArg(args, "funnel_id");
+      if (funnelId) query.set("funnel_id", funnelId);
+      const objective = optionalFilterArg(args, "objective");
+      if (objective) {
+        if (!["convert", "grow", "save"].includes(objective)) {
+          throw new McpProtocolError(-32602, "objective must be convert, grow, or save.");
+        }
+        query.set("objective", objective);
+      }
+      const attributionRole = optionalFilterArg(args, "attribution_role");
+      if (attributionRole) {
+        if (!(attributionRoles as readonly string[]).includes(attributionRole)) {
+          throw new McpProtocolError(-32602, "attribution_role must be direct, influenced, or observed.");
+        }
+        query.set("attribution_role", attributionRole);
+      }
+      return structuredToolResult(
+        await developerGet(`/api/developer-tools/results?${query}`, args, options),
+      );
+    }
+    if (name === "get_funnel_results") {
+      const funnelId = uuidArg(args, "funnel_id", true);
+      const query = new URLSearchParams({ window: resultsWindowArg(args) });
+      return structuredToolResult(
+        await developerGet(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/results?${query}`,
+          args,
+          options,
+        ),
+      );
+    }
+    if (name === "list_opportunities" || name === "list_leads") {
+      const query = new URLSearchParams({
+        limit: String(integerArg(args, "limit", 25, 50)),
+        offset: String(integerArg(args, "offset", 0, 250_000)),
+      });
+      const funnelId = uuidArg(args, "funnel_id");
+      if (funnelId) query.set("funnel_id", funnelId);
+      const state = optionalFilterArg(args, "state");
+      if (state) {
+        const allowed = name === "list_leads" ? leadStates : opportunityStates;
+        if (!(allowed as readonly string[]).includes(state)) {
+          throw new McpProtocolError(-32602, `state is not a supported ${name === "list_leads" ? "Lead" : "Opportunity"} state.`);
+        }
+        query.set("state", state);
+      }
+      const resource = name === "list_leads" ? "leads" : "opportunities";
+      return structuredToolResult(
+        await developerGet(`/api/developer-tools/${resource}?${query}`, args, options),
+      );
+    }
+    if (name === "get_opportunity" || name === "get_lead") {
+      const resource = name === "get_lead" ? "leads" : "opportunities";
+      const id = uuidArg(args, name === "get_lead" ? "lead_id" : "opportunity_id", true);
+      return structuredToolResult(
+        await developerGet(
+          `/api/developer-tools/${resource}/${encodeURIComponent(id)}`,
           args,
           options,
         ),
