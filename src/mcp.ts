@@ -74,6 +74,7 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_integration_health: "developer.workspace.read",
   get_signal_payload_preview: "developer.workspace.read",
   get_workspace_readiness: "developer.workspace.read",
+  list_workspaces: "developer.workspace.read",
   inspect_funnel_entry: "funnel.entry.inspect",
   list_mapping_gaps: "developer.workspace.read",
   list_recent_signals: "developer.workspace.read",
@@ -215,7 +216,10 @@ function objectArg(args: JsonObject, name: string) {
 function sanitizeString(value: string) {
   const withoutSecrets = value
     .replace(tokenPattern, (candidate) =>
-      /^[A-Z0-9_]+$/.test(candidate) ? candidate : "[redacted-token]",
+      /^[A-Z0-9_]+$/.test(candidate) ||
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate)
+        ? candidate
+        : "[redacted-token]",
     )
     .replace(emailPattern, "[redacted-email]");
   try {
@@ -525,6 +529,33 @@ function emptyLiveInputSchema() {
     },
     type: "object",
   };
+}
+
+const hostedWorkspaceToolNames = new Set([
+  "get_integration_health",
+  "get_workspace_readiness",
+  "list_mapping_gaps",
+  "list_recent_signals",
+  "get_signal_payload_preview",
+  "inspect_funnel_entry",
+  "propose_funnel_entry_installation",
+  "get_account_strategy",
+  "simulate_account_funnel_fit",
+]);
+
+function developerPathForWorkspace(
+  path: string,
+  args: JsonObject,
+  options: SaaSFunnelsMcpOptions,
+) {
+  if (!options.hostedMode) return path;
+  if ("workspace_id" in args && !stringArg(args, "workspace_id")) {
+    throw new McpProtocolError(-32602, "workspace_id must be a non-empty string.");
+  }
+  const workspaceId = stringArg(args, "workspace_id");
+  return workspaceId
+    ? `${path}${path.includes("?") ? "&" : "?"}workspace_id=${encodeURIComponent(workspaceId)}`
+    : path;
 }
 
 export function saasFunnelsMcpToolDefinitions({
@@ -922,6 +953,31 @@ export function hostedSaaSFunnelsMcpToolDefinitions() {
       agentCapabilityAllowedAtBoundary(capability.id, "hosted_mcp"),
     );
   });
+  for (const tool of tools) {
+    if (!hostedWorkspaceToolNames.has(tool.name)) continue;
+    const properties = tool.inputSchema.properties as JsonObject;
+    properties.workspace_id = {
+      description:
+        "Workspace ID from list_workspaces. Required when your OAuth identity can access multiple workspaces; optional when it can access one. The server verifies access for every call.",
+      type: "string",
+    };
+  }
+  tools.push({
+    annotations: {
+      idempotentHint: true,
+      openWorldHint: true,
+      readOnlyHint: true,
+    },
+    description:
+      "List the names and IDs of workspaces accessible to the OAuth user. Use a workspace ID from this list to target live tools when more than one workspace is accessible.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {},
+      type: "object",
+    },
+    name: "list_workspaces",
+    title: "List Workspaces",
+  });
   assertMcpToolCapabilityContract(tools, "hosted_mcp");
   return tools;
 }
@@ -955,7 +1011,7 @@ async function developerGet(
   }
 
   const response = await (options.fetch ?? fetch)(
-    `${apiBaseUrl(options, args)}${path}`,
+    `${apiBaseUrl(options, args)}${developerPathForWorkspace(path, args, options)}`,
     {
       headers: {
         authorization,
@@ -1003,7 +1059,7 @@ async function developerPost(
     });
   }
   const response = await (options.fetch ?? fetch)(
-    `${apiBaseUrl(options, args)}${path}`,
+    `${apiBaseUrl(options, args)}${developerPathForWorkspace(path, args, options)}`,
     {
       body: JSON.stringify(body),
       headers: {
@@ -1095,15 +1151,22 @@ export async function callSaaSFunnelsMcpTool(
   options: SaaSFunnelsMcpOptions = {},
 ) {
   try {
+    if (!options.hostedMode && "workspace_id" in args && hostedWorkspaceToolNames.has(name)) {
+      throw new McpProtocolError(
+        -32602,
+        "workspace_id is available only with hosted OAuth; an API key is pinned to its workspace.",
+      );
+    }
     if (
       (name === "get_account_strategy" ||
-        name === "simulate_account_funnel_fit") &&
+        name === "simulate_account_funnel_fit" ||
+        name === "list_workspaces") &&
       !options.hostedMode
     ) {
       throw new McpToolExecutionError(
-        "This account tool requires hosted OAuth.",
+        "This tool requires hosted OAuth.",
         {
-          error: "This account tool requires hosted OAuth.",
+          error: "This tool requires hosted OAuth.",
           ok: false,
           required_boundary: "hosted_mcp",
         },
@@ -1153,6 +1216,10 @@ export async function callSaaSFunnelsMcpTool(
           args,
           options,
         ),
+      );
+    if (name === "list_workspaces")
+      return structuredToolResult(
+        await developerGet("/api/developer-tools/workspaces", {}, options),
       );
     if (name === "get_workspace_readiness")
       return structuredToolResult(
