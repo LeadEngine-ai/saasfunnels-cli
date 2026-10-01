@@ -8,7 +8,7 @@
 // Nothing in the output is source. Plan values, file:line, and the enclosing
 // symbol are the same shape the instrumentation manifest already carries.
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, lstat } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -162,7 +162,11 @@ function allowed(relativePath: string, excludes: readonly string[]) {
 }
 
 function nearestSymbol(lines: string[], lineIndex: number) {
-  for (let index = lineIndex; index >= Math.max(0, lineIndex - 20); index -= 1) {
+  for (
+    let index = lineIndex;
+    index >= Math.max(0, lineIndex - 20);
+    index -= 1
+  ) {
     const match = lines[index]?.match(
       /(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/,
     );
@@ -180,7 +184,11 @@ function assignedName(line: string) {
  * `const isProPlan = planKey === PRO` says nothing on its own; what the code
  * does with `isProPlan` is the whole answer, and it is usually elsewhere.
  */
-function bindingUsages(lines: readonly string[], lineIndex: number, name: string) {
+function bindingUsages(
+  lines: readonly string[],
+  lineIndex: number,
+  name: string,
+) {
   const reference = new RegExp(`\\b${name}\\b`);
   const usages: string[] = [];
   lines.forEach((line, index) => {
@@ -254,7 +262,9 @@ export function clusterPlanBranches(
       return {
         branches: grouped,
         location: key.slice(key.indexOf("|") + 1),
-        planValues: [...new Set(grouped.map((branch) => branch.planValue))].sort(),
+        planValues: [
+          ...new Set(grouped.map((branch) => branch.planValue)),
+        ].sort(),
         polarity: decided,
         shape: grouped[0]!.shape,
       };
@@ -301,20 +311,26 @@ export async function discoverPlanBranches(input: {
     if (relativePath && !allowed(relativePath, excludes)) continue;
     let entryStat;
     try {
-      entryStat = await stat(current);
+      entryStat = await lstat(current);
     } catch {
       continue;
     }
+    if (entryStat.isSymbolicLink()) continue;
     if (entryStat.isDirectory()) {
       const entries = await readdir(current, { withFileTypes: true });
-      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      for (const entry of entries.sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )) {
         queue.push(join(current, entry.name));
       }
       continue;
     }
     if (!entryStat.isFile() || !relativePath) continue;
     if (!codeExtensions.has(extname(current).toLowerCase())) continue;
-    if (entryStat.size > maxPlanBranchFileCharacters) continue;
+    if (entryStat.size > maxPlanBranchFileCharacters)
+      throw new Error(
+        "Plan discovery found a source file above the 2 MB per-file limit. Split large source files before retrying.",
+      );
 
     const lines = (await readFile(current, "utf8")).split(/\r?\n/);
     collectConstants(lines, constants);

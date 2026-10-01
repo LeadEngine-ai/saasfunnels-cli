@@ -10,7 +10,10 @@ import {
 } from "./feature-setup.js";
 import { discoverPlanSourceCandidates } from "./plan-sources.js";
 import { discoverPlanBranches, clusterPlanBranches } from "./plan-branches.js";
-import { extractSetupPricing } from "./setup-pricing.js";
+import {
+  extractSetupPricing,
+  PricingExtractionError,
+} from "./setup-pricing.js";
 
 const exec = promisify(execFile);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -22,6 +25,14 @@ const contextSchema = z.object({
   environment: z.enum(["test", "production"]),
   catalogReady: z.boolean(),
   planNames: z.array(z.string()),
+  catalogPrices: z
+    .array(
+      z.object({
+        id: z.string().regex(/^price_[A-Za-z0-9]+$/),
+        lookupKey: z.string().nullable(),
+      }),
+    )
+    .default([]),
 });
 type Stage = "features" | "plans" | "branches";
 type Options = {
@@ -81,7 +92,12 @@ export async function runGuidedSetup(options: Options) {
     return response.json();
   };
   let run:
-    | { id: string; sequence: number; receipts: Record<string, unknown>; planNames?: string[] }
+    | {
+        id: string;
+        sequence: number;
+        receipts: Record<string, unknown>;
+        planNames?: string[];
+      }
     | undefined;
   let stage: Stage = "features";
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -102,7 +118,9 @@ export async function runGuidedSetup(options: Options) {
       await exec("git", ["rev-parse", "HEAD"], { cwd: options.cwd });
       await exec("git", ["remote", "get-url", "origin"], { cwd: options.cwd });
     } catch {
-      throw new Error("Repository setup needed: run this command inside your app’s Git repository with an initial commit and an origin remote. No push or production deploy is required for discovery.");
+      throw new Error(
+        "Repository setup needed: run this command inside your app’s Git repository with an initial commit and an origin remote. No push or production deploy is required for discovery.",
+      );
     }
     const head = (
       await exec("git", ["rev-parse", "HEAD"], { cwd: options.cwd })
@@ -175,7 +193,12 @@ export async function runGuidedSetup(options: Options) {
           ).trim(),
         ));
     if (!approved)
-      return { exitCode: options.prompt ? 0 : 2, stdout: "Discovery cancelled. Nothing was uploaded. Run npx --yes saasfunnels@latest setup when ready.\n", stderr: "" };
+      return {
+        exitCode: options.prompt ? 0 : 2,
+        stdout:
+          "Discovery cancelled. Nothing was uploaded. Run npx --yes saasfunnels@latest setup when ready.\n",
+        stderr: "",
+      };
     run = (
       await request("/api/developer-tools/setup/runs", {
         generation: context.generation,
@@ -224,6 +247,13 @@ export async function runGuidedSetup(options: Options) {
     };
     const send = (evidence: unknown) => {
       const currentStage = stage;
+      if (
+        JSON.stringify({ runId: run!.id, stage: currentStage, evidence })
+          .length > 1_000_000
+      )
+        throw new Error(
+          "Feature discovery evidence exceeds the upload size limit. Review the source scope before retrying.",
+        );
       heartbeat = heartbeat.then(async () => {
         const result = await request("/api/developer-tools/setup/evidence", {
           runId: run!.id,
@@ -233,7 +263,12 @@ export async function runGuidedSetup(options: Options) {
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
         run!.receipts[currentStage] = result.receipt ?? { complete: true };
-        if (currentStage === "plans") run!.planNames = result.planNames ?? (evidence as { plans: Array<{ key: string; name: string }> }).plans.flatMap(plan => [plan.key, plan.name]);
+        if (currentStage === "plans")
+          run!.planNames =
+            result.planNames ??
+            (
+              evidence as { plans: Array<{ key: string; name: string }> }
+            ).plans.flatMap((plan) => [plan.key, plan.name]);
       });
       return heartbeat;
     };
@@ -245,7 +280,11 @@ export async function runGuidedSetup(options: Options) {
     timer = setInterval(() => {
       void update(progressState, progressFailure).catch(() => {});
     }, 30_000);
-    options.progress?.(run.receipts.features ? "2/4 Features already submitted." : "2/4 Discovering features…");
+    options.progress?.(
+      run.receipts.features
+        ? "2/4 Features already submitted."
+        : "2/4 Discovering features…",
+    );
     if (!run.receipts.features) {
       await update("running");
       // Include candidates as proposals only. No generated files are applied;
@@ -258,8 +297,19 @@ export async function runGuidedSetup(options: Options) {
         manifestOnly: true,
         accept: ["all"],
       });
-      if (!scan.coverage.complete)
-        throw new Error("Feature discovery needs attention: no supported source was scanned or the scan limit was reached. No feature evidence was submitted. Ask your developer to review scanner coverage before retrying.");
+      if (!scan.coverage.complete) {
+        const reason = scan.coverage.byteLimitReached
+          ? `${scan.coverage.oversizedFileCount} source file(s) exceed the 2 MB per-file limit. Split large source files before retrying.`
+          : !scan.coverage.scannedFiles
+            ? "No JavaScript or TypeScript app files were found in the source roots. Run from the application folder."
+            : "More than 10,000 feature bindings were found. Review the source scope before retrying.";
+        throw new Error(
+          `Feature discovery needs attention: ${reason} Scanned ${scan.coverage.scannedFiles} of ${scan.coverage.matchedFiles} files. Nothing was submitted for this stage.`,
+        );
+      }
+      options.progress?.(
+        `Scanned ${scan.scannedFileCount} files; found ${scan.manifest.features.length} feature proposals.`,
+      );
       if (!scan.ok)
         throw new Error(
           "Feature discovery needs attention. Run features setup to review the local findings.",
@@ -274,7 +324,10 @@ export async function runGuidedSetup(options: Options) {
       );
     }
     stage = "plans";
-    if (!context.catalogReady) options.progress?.("Waiting for your Stripe catalog. Setup can stay open while it imports…");
+    if (!context.catalogReady)
+      options.progress?.(
+        "Waiting for your Stripe catalog. Setup can stay open while it imports…",
+      );
     const catalogDeadline = Date.now() + 5 * 60_000;
     const generation = context.generation;
     while (!context.catalogReady && Date.now() < catalogDeadline) {
@@ -293,65 +346,106 @@ export async function runGuidedSetup(options: Options) {
           "Stripe is still importing. Run npx --yes saasfunnels@latest setup --resume when the catalog is ready.\n",
         stderr: "",
       };
-    options.progress?.(run.receipts.plans ? "3/4 Plans already submitted." : "3/4 Discovering plans and prices…");
+    options.progress?.(
+      run.receipts.plans
+        ? "3/4 Plans already submitted."
+        : "3/4 Discovering plans and prices…",
+    );
     if (!run.receipts.plans) {
       await update("running");
       const candidates = await discoverPlanSourceCandidates({
         cwd: options.cwd,
       });
+      let manual: string | null = null;
       try {
-        if (candidates.length > 12) throw new Error("Too many sources");
-        let manual: string | null = null;
+        manual = await readFile(
+          join(options.cwd, ".saasfunnels/setup-pricing.json"),
+          "utf8",
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const byKey = new Map<
+        string,
+        ReturnType<typeof extractSetupPricing>[number]
+      >();
+      const reviewedFiles: string[] = [];
+      const issues: { file: string; reason: string }[] = [];
+      const sources =
+        manual !== null
+          ? [{ path: ".saasfunnels/setup-pricing.json", kind: "json" as const }]
+          : candidates;
+      for (const candidate of sources) {
         try {
-          manual = await readFile(
-            join(options.cwd, ".saasfunnels/setup-pricing.json"),
-            "utf8",
+          const plans = extractSetupPricing(
+            manual ??
+              (await readFile(join(options.cwd, candidate.path), "utf8")),
+            candidate.kind,
+            context.catalogPrices,
           );
+          for (const plan of plans) {
+            if (
+              byKey.has(plan.key) &&
+              JSON.stringify(byKey.get(plan.key)) !== JSON.stringify(plan)
+            )
+              throw new PricingExtractionError(
+                "needs_review",
+                "Conflicting declarations for the same plan.",
+              );
+            byKey.set(plan.key, plan);
+          }
+          reviewedFiles.push(candidate.path);
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        const discovered =
-          manual !== null
-            ? extractSetupPricing(manual, "json")
-            : (
-                await Promise.all(
-                  candidates.map(async (candidate) =>
-                    extractSetupPricing(
-                      await readFile(join(options.cwd, candidate.path), "utf8"),
-                      candidate.kind,
-                    ),
-                  ),
-                )
-              ).flat();
-        const byKey = new Map<string, (typeof discovered)[number]>();
-        for (const plan of discovered) {
           if (
-            byKey.has(plan.key) &&
-            JSON.stringify(byKey.get(plan.key)) !== JSON.stringify(plan)
+            manual === null &&
+            error instanceof PricingExtractionError &&
+            error.code === "no_declarations"
           )
-            throw new Error("Conflicting pricing sources");
-          byKey.set(plan.key, plan);
+            continue;
+          issues.push({
+            file: candidate.path,
+            reason:
+              error instanceof PricingExtractionError
+                ? error.message
+                : "Unsupported pricing syntax.",
+          });
         }
-        await send({
-          plans: [...byKey.values()],
-          reviewedFiles:
-            manual !== null
-              ? [".saasfunnels/setup-pricing.json"]
-              : candidates.map((c) => c.path),
+      }
+      if (reviewedFiles.length > 12 || byKey.size > 200)
+        issues.push({
+          file: "pricing",
+          reason:
+            "Combine the pricing declarations into at most 12 files and 200 plans.",
         });
-      } catch {
+      if (issues.length) {
+        await writeFile(
+          join(options.cwd, ".saasfunnels/setup-review.json"),
+          JSON.stringify({ stage: "plans", issues }, null, 2) + "\n",
+          { mode: 0o600 },
+        );
         await update("waiting", "extraction_unsupported");
         return {
           exitCode: 2,
-          stdout:
-            "Pricing discovery needs manual review. Create .saasfunnels/setup-pricing.json with a plans array containing key, name, features (boolean or numeric access), and prices (Stripe price IDs). Review it, then run npx --yes saasfunnels@latest setup --resume. No source files were uploaded.\n",
+          stdout: `Pricing needs review in ${issues.length} file(s). See .saasfunnels/setup-review.json for the exact files and reasons. Ask your coding agent to review those declarations, or prepare .saasfunnels/setup-pricing.json, then run npx --yes saasfunnels@latest setup --resume. No pricing evidence was submitted.\n`,
           stderr: "",
         };
       }
+      options.progress?.(
+        `Found ${byKey.size} plan proposals in ${reviewedFiles.length} pricing files.`,
+      );
+      // Transport failures must not be reported as unsupported source syntax.
+      await send({ plans: [...byKey.values()], reviewedFiles });
     }
+
     stage = "branches";
-    const planValues = [...new Set([...context.planNames, ...(run.planNames ?? [])])];
-    options.progress?.(run.receipts.branches ? "4/4 Plan checks already submitted." : "4/4 Checking plan conditions…");
+    const planValues = [
+      ...new Set([...context.planNames, ...(run.planNames ?? [])]),
+    ];
+    options.progress?.(
+      run.receipts.branches
+        ? "4/4 Plan checks already submitted."
+        : "4/4 Checking plan conditions…",
+    );
     if (!run.receipts.branches) {
       await update("running");
       const branches = planValues.length
@@ -372,6 +466,7 @@ export async function runGuidedSetup(options: Options) {
           symbol: branch.symbol,
         })),
       }));
+      options.progress?.(`Found ${clusters.length} groups of plan conditions.`);
       await send({
         clusters,
         environment: context.environment,
@@ -394,7 +489,7 @@ export async function runGuidedSetup(options: Options) {
     // Never print provider bodies, environment values, or credential-bearing git errors.
     const safe =
       error instanceof Error &&
-      /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery|Repository setup)/.test(
+      /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery|Plan discovery|Repository setup)/.test(
         error.message,
       )
         ? error.message
