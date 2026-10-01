@@ -111,3 +111,11 @@ If extraction is unsupported, `.saasfunnels/setup-review.json` lists the files a
 Discovery follows Git ignore rules (including custom build folders) while keeping tracked application sources and new, non-ignored source files. Standalone folders without Git use the standard source filters.
 
 The command does not implement arbitrary payment code, approve feature access, or verify transactions. Complete **Review and verify** in Setup after deploying the runtime and payment integration. Requires the server's guided setup API release.
+
+### Discovery accuracy and review
+
+Guided setup proposes supported JavaScript/TypeScript gates and static JS/TS/JSON/YAML catalogs. Tests, fixture/demo scopes, comments, and generic role permissions are excluded. Named capabilities and numeric/unlimited limits remain separate; units, reset periods, and aggregation require review in Setup's existing Plans & pricing editor.
+
+A frontend scan is not evidence of complete backend coverage. Setup flags unsupported application languages, unresolved dynamic access, and optional add-on/capacity/trial declarations. Review these against the actual application's entitlement owner before confirming. Imported or dynamic pricing that cannot be statically resolved needs reviewed literal `.saasfunnels/setup-pricing.json` evidence or manual configuration; source is never executed. Arbitrary helper names and external services cannot be exhaustively discovered automatically.
+
+Feature configuration must be saved and published in Plans & pricing before Setup can confirm it. Naming an unnamed restriction records a review decision; it does not implement access. A new scanner version may require running without `--resume`; guided rescans preserve human decisions and leave local generated catalogs untouched.
