@@ -1,4 +1,6 @@
 import { dirname, join, resolve } from "node:path";
+import { extractSetupPricing } from "./setup-pricing.js";
+import { runGuidedSetup, submitApprovedSetupPlans } from "./setup-run.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   getDeveloperToolAgentHandoffArtifacts,
@@ -181,6 +183,7 @@ function usage() {
   return `${SAASFUNNELS_PRODUCT_NAME} CLI
 
 Usage:
+  ${SAASFUNNELS_CLI_NAME} setup run [--resume] [--send]
   ${SAASFUNNELS_CLI_NAME} init [--api-base-url <url>] [--force]
   ${SAASFUNNELS_CLI_NAME} agent install --target codex|claude-code|cursor|markdown [--endpoint <url>]
   ${SAASFUNNELS_CLI_NAME} events validate <file> [--source direct|posthog|segment] [--json]
@@ -1301,7 +1304,7 @@ async function commandPlans(
           })
         : result(
             0,
-            `Would upload for plan mapping:\n${inputs
+            `Would extract plan evidence locally from:\n${inputs
               .map((entry) => `- ${entry.label}`)
               .join("\n")}\n\nAdd --send to upload.\n`,
           );
@@ -1312,28 +1315,17 @@ async function commandPlans(
       return result(
         2,
         "",
-        "Missing SAASFUNNELS_API_KEY with catalog access for --send.\n",
+        "Missing SAASFUNNELS_API_KEY with features:write for --send.\n",
       );
-    const response = await (options.fetch ?? fetch)(
-      `${apiBaseUrl(options, flags)}/api/funnels/catalog/plan-mapping/imports`,
-      {
-        body: JSON.stringify({ inputs, integrationId, requestKey }),
-        headers: {
-          authorization: `Bearer ${key}`,
-          "content-type": "application/json",
-        },
-        method: "POST",
-      },
-    );
-    const body = await response.json();
-    return jsonMode(flags)
-      ? jsonResult(response.ok ? 0 : 1, body)
-      : response.ok
-        ? result(
-            0,
-            `Staged ${inputs.length} plan source(s) for review in SaaSFunnels.\n`,
-          )
-        : result(1, "", "The plan mapping handoff was rejected.\n");
+    try {
+      const plans = inputs.flatMap(entry => extractSetupPricing(entry.content, entry.kind));
+      await submitApprovedSetupPlans({ apiBaseUrl: apiBaseUrl(options, flags), key, repositoryKey,
+        revision: repositoryRevision, integrationId, fetch: options.fetch,
+        evidence: { plans, reviewedFiles: files } });
+      return jsonMode(flags) ? jsonResult(0, { accepted: true }) : result(0, "Plan findings submitted. Review them in Setup. No source files were uploaded.\n");
+    } catch {
+      return result(1, "", "Plan evidence needs attention. Confirm the current Stripe connection and use supported literal pricing declarations, then retry. No raw source is uploaded.\n");
+    }
   }
 
   return result(2, "", `Unknown plans command.\n\n${usage()}`);
@@ -1350,6 +1342,7 @@ export async function runSaaSFunnelsCli(
     if (!command || command === "help" || command === "--help")
       return result(0, usage());
     if (command === "init") return await commandInit(parsed.flags, options);
+    if (command === "setup" && args[0] === "run") return runGuidedSetup({ cwd: cwd(options), apiBaseUrl: apiBaseUrl(options, parsed.flags), key: envValue(options, SAASFUNNELS_ENV.apiKey), send: hasFlag(parsed.flags, "send"), resume: hasFlag(parsed.flags, "resume"), fetch: options.fetch, prompt: jsonMode(parsed.flags) ? undefined : options.prompt });
     if (command === "agent")
       return await commandAgentInstall(args, parsed.flags, options);
     if (command === "events")
