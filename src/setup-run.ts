@@ -80,7 +80,7 @@ export async function runGuidedSetup(options: Options) {
     return response.json();
   };
   let run:
-    | { id: string; sequence: number; receipts: Record<string, unknown> }
+    | { id: string; sequence: number; receipts: Record<string, unknown>; planNames?: string[] }
     | undefined;
   let stage: Stage = "features";
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -229,7 +229,8 @@ export async function runGuidedSetup(options: Options) {
         });
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
-        run!.receipts[currentStage] = result.receipt ?? (currentStage === "plans" ? { plans: (evidence as { plans: unknown[] }).plans } : { complete: true });
+        run!.receipts[currentStage] = result.receipt ?? { complete: true };
+        if (currentStage === "plans") run!.planNames = result.planNames ?? (evidence as { plans: Array<{ key: string; name: string }> }).plans.flatMap(plan => [plan.key, plan.name]);
       });
       return heartbeat;
     };
@@ -341,8 +342,7 @@ export async function runGuidedSetup(options: Options) {
       }
     }
     stage = "branches";
-    const pricingReceipt = run.receipts.plans as { plans?: Array<{ key: string; name: string }> } | undefined;
-    const planValues = [...new Set([...context.planNames, ...(pricingReceipt?.plans ?? []).flatMap(plan => [plan.key, plan.name])])];
+    const planValues = [...new Set([...context.planNames, ...(run.planNames ?? [])])];
     if (!run.receipts.branches) {
       await update("running");
       const branches = planValues.length
