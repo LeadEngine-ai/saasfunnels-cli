@@ -185,7 +185,7 @@ describe("plans CLI", () => {
     expect(handoff.stderr).toContain("No approved plan sources");
   });
 
-  it("uploads only approved files and names them first", async () => {
+  it("extracts only approved files locally and sends normalized evidence with developer auth", async () => {
     const cwd = await fixture({
       "src/plans.ts": plansFile,
       "src/pricing.ts": "export const PRICING = { pro: 'price_1QOtherAbCdEfGhIjKlMnOp' };\n",
@@ -199,12 +199,14 @@ describe("plans CLI", () => {
     );
 
     let body: any = null;
-    const fetchImpl = (async (_url: string, init: RequestInit) => {
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      expect(new Headers(init.headers).get("authorization")).toBeTruthy();
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith("/context")) return Response.json({ workspaceId: "workspace", generation: "a".repeat(64), installationId: "installation", integrationId: "11111111-1111-4111-8111-111111111111", environment: "test", catalogReady: true, planNames: ["free", "pro"] });
+      if (path.endsWith("/runs")) return Response.json({ run: { id: "11111111-1111-4111-8111-111111111111" } });
+      expect(path).toBe("/api/developer-tools/setup/evidence");
       body = JSON.parse(init.body as string);
-      return new Response(JSON.stringify({ ok: true }), {
-        headers: { "content-type": "application/json" },
-        status: 200,
-      });
+      return Response.json({ accepted: true });
     }) as unknown as typeof fetch;
 
     const dryRun = await runSaaSFunnelsCli(
@@ -241,10 +243,10 @@ describe("plans CLI", () => {
     );
 
     expect(sent.exitCode).toBe(0);
-    expect(body.inputs).toHaveLength(1);
-    expect(body.inputs[0].label).toBe("src/plans.ts");
-    expect(body.inputs[0].kind).toBe("typescript");
-    expect(body.inputs[0].content).toContain("price_1QAbCdEfGhIjKlMnOpQrStUv");
-    expect(body.requestKey).toMatch(/^[a-z][a-z0-9_.:-]{7,159}$/);
+    expect(body.evidence.reviewedFiles).toEqual(["src/plans.ts"]);
+    expect(body.evidence.plans).toHaveLength(2);
+    expect(body.evidence.plans[0].features).toEqual({ basic_export: true });
+    expect(JSON.stringify(body)).not.toContain("export const");
+    expect(body.stage).toBe("plans");
   });
 });

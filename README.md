@@ -37,9 +37,9 @@ saasfunnels plans handoff --integration-id <id> \
 prices. Files that reference a Stripe price are reported as evidence; files that
 only look commercial by name and content are reported separately as guesses.
 Nothing leaves the machine until `.saasfunnels/plan-sources.json` lists the files
-and `plans handoff --send` is run, because plan mapping receives file contents
-rather than the `file:line` references a feature manifest sends. Commit that file
-so the approved set is reviewable.
+and `plans handoff --send` is run. The CLI extracts normalized mapping evidence
+locally; source contents stay on your machine. Commit the approval file so the
+approved set is reviewable.
 
 ### GitHub Action
 
@@ -91,3 +91,13 @@ The package allowlist is enforced as `LICENSE`, `README.md`, `package.json`, the
 Documentation: https://docs.saasfunnels.ai/developer-tools/saasfunnels-cli
 
 Support: support@saasfunnels.ai
+
+### Guided application discovery
+
+Use `saasfunnels setup run` from the application repository after creating app credentials in Setup. Load `SAASFUNNELS_API_KEY` from **Developer setup access** into the local process environment. Its scopes are `developer:read` and `features:write`; it is not a browser or payment-administration key.
+
+The command asks before uploading structured discovery proposals. `--send` provides explicit non-interactive approval. It coordinates features, pricing extraction, and plan branches, reports progress, and waits for the Stripe catalog. Run `saasfunnels setup run --resume` after an interruption. Existing accepted stages and customer review decisions are preserved.
+
+If extraction is unsupported, review a `.saasfunnels/setup-pricing.json` file with `{ "plans": [{ "key": "pro", "name": "Pro", "features": { "export": true }, "prices": [{ "key": "price_ACTUAL_ID" }] }] }`, then resume. Use real identifiers from the connected merchant. Raw source files are never uploaded by guided setup or the pricing handoff.
+
+The command does not implement arbitrary payment code, approve feature access, or verify transactions. Complete **Review and verify** in Setup after deploying the runtime and payment integration. Requires the server's guided setup API release.

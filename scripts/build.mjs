@@ -12,7 +12,7 @@ const libraryOutfile = resolve(outdir, "library.js");
 const typeOutdir = resolve(outdir, "types");
 
 const banner =
-  'import { createRequire as __saasfunnelsCreateRequire } from "node:module"; const require = __saasfunnelsCreateRequire(import.meta.url);';
+  'import { createRequire as __saasfunnelsCreateRequire } from "node:module"; const require = __saasfunnelsCreateRequire(import.meta.url); const __filename = new URL(import.meta.url).pathname; const __dirname = require("node:path").dirname(__filename);';
 
 await rm(outdir, { force: true, recursive: true });
 await mkdir(outdir, { recursive: true });

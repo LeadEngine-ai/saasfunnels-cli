@@ -8,7 +8,7 @@ const argv = process.argv.slice(2);
 const interactiveFeatureSetup =
   !argv.includes("--json") &&
   !argv.includes("--non-interactive") &&
-  ((argv[0] === "features" && argv[1] === "setup") ||
+  ((argv[0] === "setup" && argv[1] === "run") || (argv[0] === "features" && argv[1] === "setup") ||
     (argv[0] === "catalog" && ["discover", "diff"].includes(argv[1] ?? "")));
 const prompts = interactiveFeatureSetup
   ? createInterface({ input: process.stdin, output: process.stdout })
