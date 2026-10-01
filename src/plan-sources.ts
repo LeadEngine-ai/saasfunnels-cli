@@ -1,4 +1,4 @@
-import { readFile, readdir, stat, writeFile, mkdir } from "node:fs/promises";
+import { readFile, readdir, lstat, writeFile, mkdir } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -60,14 +60,15 @@ const planSourceKindByExtension = new Map<string, PlanSourceKind>([
 const billingIntervalPattern =
   /\b(month|monthly|year|yearly|annual|annually|week|weekly|day|daily|recurring|interval|billing_period)\b/i;
 const chargeAmountPattern =
-  /\b(unit_amount|unit_amount_decimal|amount|amount_decimal|price|prices|currency|usd|eur|gbp|cents)\b/i;
+  /\b(unit_amount|unit_amount_decimal|unitAmount|amount|amount_decimal|price|prices|currency|usd|eur|gbp|cents)\b/i;
 
 const stripePriceIdPattern =
   /["'`]price_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{14,}["'`]/;
 
 // A pricing definition never lives in a test or a type declaration, and both
 // match the filename heuristic often enough to be noise.
-const nonDefinitionPattern = /(^|\/)(__tests__|__mocks__|tests?|specs?)(\/)|\.(test|spec|d)\.[cm]?[jt]sx?$/i;
+const nonDefinitionPattern =
+  /(^|\/)(__tests__|__mocks__|tests?|specs?)(\/)|\.(test|spec|d)\.[cm]?[jt]sx?$/i;
 
 export type PlanSourceKind = "json" | "typescript" | "yaml";
 
@@ -125,7 +126,7 @@ export async function discoverPlanSourceCandidates(input: {
   const candidates: PlanSourceCandidate[] = [];
   const queue = roots.map((root) => resolve(input.cwd, root));
 
-  while (queue.length && candidates.length < 200) {
+  while (queue.length) {
     const current = queue.shift()!;
     if (seen.has(current)) continue;
     seen.add(current);
@@ -133,13 +134,16 @@ export async function discoverPlanSourceCandidates(input: {
     if (relativePath && !allowed(relativePath, excludes)) continue;
     let entryStat;
     try {
-      entryStat = await stat(current);
+      entryStat = await lstat(current);
     } catch {
       continue;
     }
+    if (entryStat.isSymbolicLink()) continue;
     if (entryStat.isDirectory()) {
       const entries = await readdir(current, { withFileTypes: true });
-      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      for (const entry of entries.sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )) {
         queue.push(join(current, entry.name));
       }
       continue;
@@ -147,7 +151,13 @@ export async function discoverPlanSourceCandidates(input: {
     if (!entryStat.isFile()) continue;
     const kind = planSourceKindByExtension.get(extname(current).toLowerCase());
     if (!kind || !relativePath) continue;
-    if (entryStat.size > maxPlanSourceCharacters) continue;
+    if (entryStat.size > 2_000_000) {
+      if (looksLikePlanSource(relativePath))
+        throw new Error(
+          "Plan discovery found a pricing file above the 2 MB per-file limit. Split large pricing files before retrying.",
+        );
+      continue;
+    }
 
     const contents = await readFile(current, "utf8");
     const hasStripePriceId = stripePriceIdPattern.test(contents);
@@ -157,7 +167,8 @@ export async function discoverPlanSourceCandidates(input: {
     // look; they do not decide what is eligible. Real pricing lives in files
     // named things like `ee/stripe/utils.ts`, which no stem list would match.
     const looksPriced =
-      billingIntervalPattern.test(contents) && chargeAmountPattern.test(contents);
+      billingIntervalPattern.test(contents) &&
+      chargeAmountPattern.test(contents);
     if (!hasStripePriceId && !(named && looksPriced)) continue;
     candidates.push({
       characters: contents.length,
@@ -180,7 +191,7 @@ export async function discoverPlanSourceCandidates(input: {
   );
   const confirmed = sorted.filter((candidate) => candidate.hasStripePriceId);
   const namedOnly = sorted.filter((candidate) => !candidate.hasStripePriceId);
-  return [...confirmed, ...namedOnly.slice(0, maxNamedOnlyCandidates)];
+  return [...confirmed, ...namedOnly];
 }
 
 export async function readApprovedPlanSources(cwd: string): Promise<string[]> {
@@ -188,14 +199,19 @@ export async function readApprovedPlanSources(cwd: string): Promise<string[]> {
     const raw = await readFile(resolve(cwd, planSourceApprovalPath), "utf8");
     const parsed = JSON.parse(raw) as { files?: unknown };
     return Array.isArray(parsed.files)
-      ? parsed.files.filter((value): value is string => typeof value === "string")
+      ? parsed.files.filter(
+          (value): value is string => typeof value === "string",
+        )
       : [];
   } catch {
     return [];
   }
 }
 
-export async function writeApprovedPlanSources(cwd: string, files: readonly string[]) {
+export async function writeApprovedPlanSources(
+  cwd: string,
+  files: readonly string[],
+) {
   const target = resolve(cwd, planSourceApprovalPath);
   await mkdir(dirname(target), { recursive: true });
   await writeFile(
@@ -235,7 +251,9 @@ export async function buildPlanMappingHandoff(input: {
     if (!allowed(relativePath, [])) {
       throw new Error(`${relativePath} is not a readable plan source path.`);
     }
-    const kind = planSourceKindByExtension.get(extname(relativePath).toLowerCase());
+    const kind = planSourceKindByExtension.get(
+      extname(relativePath).toLowerCase(),
+    );
     if (!kind) {
       throw new Error(`${relativePath} is not a supported plan source type.`);
     }

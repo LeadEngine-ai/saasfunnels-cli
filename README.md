@@ -102,6 +102,10 @@ Use `saasfunnels setup run` from the application repository after creating app c
 
 The command asks before uploading structured discovery proposals. `--send` provides explicit non-interactive approval. It coordinates features, pricing extraction, and plan branches, reports progress, and waits for the Stripe catalog. Run `saasfunnels setup run --resume` after an interruption. Existing accepted stages and customer review decisions are preserved.
 
-If extraction is unsupported, review a `.saasfunnels/setup-pricing.json` file with `{ "plans": [{ "key": "pro", "name": "Pro", "features": { "export": true }, "prices": [{ "key": "price_ACTUAL_ID" }] }] }`, then resume. Use real identifiers from the connected merchant. Raw source files are never uploaded by guided setup or the pricing handoff.
+The scanner reads supported application files one at a time without the old 500-file, 2 MB repository, or 200-candidate cutoffs. Generated code, tests, and symlinks are excluded. Files over 2 MB and uploads over the server limit stop with a specific recovery message.
+
+Static pricing supports literal spreads, capability/quota maps, unlimited limits, and exact Stripe lookup-key matching. It never executes customer code. Pricing definitions are inspected beyond the first ten filename matches; unrelated helpers do not count as plans.
+
+If extraction is unsupported, `.saasfunnels/setup-review.json` lists the files and reasons. Correct those declarations or review a `.saasfunnels/setup-pricing.json` file with `{ "plans": [{ "key": "pro", "name": "Pro", "features": { "export": true }, "prices": [{ "key": "price_ACTUAL_ID" }] }] }`, then resume. Use real identifiers from the connected merchant. Raw source files are never uploaded by guided setup or the pricing handoff.
 
 The command does not implement arbitrary payment code, approve feature access, or verify transactions. Complete **Review and verify** in Setup after deploying the runtime and payment integration. Requires the server's guided setup API release.
