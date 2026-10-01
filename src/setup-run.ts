@@ -229,6 +229,7 @@ export async function runGuidedSetup(options: Options) {
         });
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
+        run!.receipts[currentStage] = result.receipt ?? (currentStage === "plans" ? { plans: (evidence as { plans: unknown[] }).plans } : { complete: true });
       });
       return heartbeat;
     };
@@ -340,12 +341,14 @@ export async function runGuidedSetup(options: Options) {
       }
     }
     stage = "branches";
+    const pricingReceipt = run.receipts.plans as { plans?: Array<{ key: string; name: string }> } | undefined;
+    const planValues = [...new Set([...context.planNames, ...(pricingReceipt?.plans ?? []).flatMap(plan => [plan.key, plan.name])])];
     if (!run.receipts.branches) {
       await update("running");
-      const branches = context.planNames.length
+      const branches = planValues.length
         ? await discoverPlanBranches({
             cwd: options.cwd,
-            planValues: context.planNames,
+            planValues,
           })
         : [];
       const clusters = clusterPlanBranches(branches).map((cluster) => ({
@@ -363,7 +366,7 @@ export async function runGuidedSetup(options: Options) {
       await send({
         clusters,
         environment: context.environment,
-        planValues: context.planNames,
+        planValues,
         producer: "cli",
         repositoryKey,
         repositoryRevision: revision,
