@@ -1,3 +1,4 @@
+import { repositorySourceScope } from "./source-scope.js";
 import { readFile, readdir, lstat, writeFile, mkdir } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
@@ -124,6 +125,7 @@ export async function discoverPlanSourceCandidates(input: {
   const roots = input.roots ?? [".", "config", ...defaultRoots];
   const seen = new Set<string>();
   const candidates: PlanSourceCandidate[] = [];
+  const inRepository = await repositorySourceScope(input.cwd);
   const queue = roots.map((root) => resolve(input.cwd, root));
 
   while (queue.length) {
@@ -131,7 +133,11 @@ export async function discoverPlanSourceCandidates(input: {
     if (seen.has(current)) continue;
     seen.add(current);
     const relativePath = normalize(relative(input.cwd, current));
-    if (relativePath && !allowed(relativePath, excludes)) continue;
+    if (
+      !inRepository(relativePath) ||
+      (relativePath && !allowed(relativePath, excludes))
+    )
+      continue;
     let entryStat;
     try {
       entryStat = await lstat(current);

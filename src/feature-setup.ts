@@ -1,3 +1,4 @@
+import { repositorySourceScope } from "./source-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   access,
@@ -294,6 +295,7 @@ async function walkFiles(input: {
   excludes: string[];
   roots: string[];
 }) {
+  const inRepository = await repositorySourceScope(input.cwd);
   const files: string[] = [];
   const queue = input.roots.map((root) => resolve(input.cwd, root));
   const seen = new Set<string>();
@@ -303,7 +305,12 @@ async function walkFiles(input: {
     if (seen.has(current)) continue;
     seen.add(current);
     const relativePath = safeRelative(input.cwd, current);
-    if (!relativePath || !allowedPath(relativePath, input.excludes)) continue;
+    if (
+      !relativePath ||
+      !inRepository(relativePath) ||
+      !allowedPath(relativePath, input.excludes)
+    )
+      continue;
     let currentStat;
     try {
       currentStat = await lstat(current);

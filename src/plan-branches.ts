@@ -1,3 +1,4 @@
+import { repositorySourceScope } from "./source-scope.js";
 // Finds the places a codebase behaves differently by plan.
 //
 // This is the mechanical half of plan mapping. Naming what a branch gates needs
@@ -301,6 +302,7 @@ export async function discoverPlanBranches(input: {
       reference: string | null;
     }
   > = [];
+  const inRepository = await repositorySourceScope(input.cwd);
   const queue = roots.map((root) => resolve(input.cwd, root));
 
   while (queue.length) {
@@ -308,7 +310,11 @@ export async function discoverPlanBranches(input: {
     if (seen.has(current)) continue;
     seen.add(current);
     const relativePath = normalize(relative(input.cwd, current));
-    if (relativePath && !allowed(relativePath, excludes)) continue;
+    if (
+      !inRepository(relativePath) ||
+      (relativePath && !allowed(relativePath, excludes))
+    )
+      continue;
     let entryStat;
     try {
       entryStat = await lstat(current);

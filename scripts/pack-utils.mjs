@@ -16,6 +16,7 @@ export const expectedPackageFiles = [
   "dist/types/library.d.ts",
   "dist/types/mcp.d.ts",
   "dist/types/runtime-contracts.d.ts",
+  "dist/types/source-scope.d.ts",
   "package.json",
 ].sort((left, right) => left.localeCompare(right));
 
