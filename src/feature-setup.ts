@@ -204,6 +204,7 @@ export type FeatureSetupResult = {
     state: "failed" | "passed" | "skipped";
   };
   scannedFileCount: number;
+  coverage: { complete: boolean; matchedFiles: number; scannedFiles: number; byteLimitReached: boolean; candidateLimitReached: boolean };
   validation: { errors: string[]; ok: boolean };
 };
 
@@ -711,7 +712,7 @@ export async function runFeatureRuntimeCheck(input: {
 export async function runFeatureSetup(
   input: FeatureSetupInput,
 ): Promise<FeatureSetupResult> {
-  if (input.environment !== "test") {
+  if (input.environment !== "test" && !(input.manifestOnly && !input.apply && !input.prompt)) {
     throw new Error(
       "Feature setup is Test-only. Review and promote Feature catalogs from Stripe Products.",
     );
@@ -732,12 +733,15 @@ export async function runFeatureSetup(
   });
   const discovered: FeatureCandidate[] = [];
   let scannedBytes = 0;
+  let scannedFileCount = 0;
+  let byteLimitReached = false;
   for (const file of files) {
     const source = await readFile(file, "utf8");
     scannedBytes += Buffer.byteLength(source);
-    if (scannedBytes > 2_000_000) break;
+    if (scannedBytes > 2_000_000) { byteLimitReached = true; break; }
     const path = safeRelative(input.cwd, file);
     if (!path) continue;
+    scannedFileCount++;
     discovered.push(...candidatesFromFile(path, source));
   }
   const uniqueCandidates = new Map<string, FeatureCandidate>();
@@ -944,7 +948,8 @@ export async function runFeatureSetup(
     ok: validation.ok,
     reviewUrl,
     runtimeCheck: check,
-    scannedFileCount: files.length,
+    scannedFileCount,
+    coverage: { complete: scannedFileCount > 0 && !byteLimitReached && uniqueCandidates.size <= 200, matchedFiles: files.length, scannedFiles: scannedFileCount, byteLimitReached, candidateLimitReached: uniqueCandidates.size > 200 },
     validation: { errors: validation.errors, ok: validation.ok },
   };
 }

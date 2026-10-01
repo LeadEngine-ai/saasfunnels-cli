@@ -32,6 +32,7 @@ type Options = {
   resume: boolean;
   fetch?: typeof fetch;
   prompt?: (message: string) => Promise<string>;
+  progress?: (message: string) => void;
 };
 
 export function safeRepositoryKey(remote: string) {
@@ -89,6 +90,7 @@ export async function runGuidedSetup(options: Options) {
   let progressState: "running" | "waiting" | "failed" = "running";
   let progressFailure: string | null = null;
   try {
+    options.progress?.("1/4 Checking app connection…");
     let context = contextSchema.parse(
       await request("/api/developer-tools/setup/context"),
     );
@@ -96,6 +98,12 @@ export async function runGuidedSetup(options: Options) {
       throw new Error(
         "Connect Stripe and create app credentials in Setup first.",
       );
+    try {
+      await exec("git", ["rev-parse", "HEAD"], { cwd: options.cwd });
+      await exec("git", ["remote", "get-url", "origin"], { cwd: options.cwd });
+    } catch {
+      throw new Error("Repository setup needed: run this command inside your app’s Git repository with an initial commit and an origin remote. No push or production deploy is required for discovery.");
+    }
     const head = (
       await exec("git", ["rev-parse", "HEAD"], { cwd: options.cwd })
     ).stdout.trim();
@@ -167,12 +175,7 @@ export async function runGuidedSetup(options: Options) {
           ).trim(),
         ));
     if (!approved)
-      return {
-        exitCode: 2,
-        stdout: "",
-        stderr:
-          "No evidence uploaded. Review the installation instructions, then run setup run --send to approve discovery uploads.\n",
-      };
+      return { exitCode: options.prompt ? 0 : 2, stdout: "Discovery cancelled. Nothing was uploaded. Run npx --yes saasfunnels@latest setup when ready.\n", stderr: "" };
     run = (
       await request("/api/developer-tools/setup/runs", {
         generation: context.generation,
@@ -242,6 +245,7 @@ export async function runGuidedSetup(options: Options) {
     timer = setInterval(() => {
       void update(progressState, progressFailure).catch(() => {});
     }, 30_000);
+    options.progress?.(run.receipts.features ? "2/4 Features already submitted." : "2/4 Discovering features…");
     if (!run.receipts.features) {
       await update("running");
       // Include candidates as proposals only. No generated files are applied;
@@ -254,6 +258,8 @@ export async function runGuidedSetup(options: Options) {
         manifestOnly: true,
         accept: ["all"],
       });
+      if (!scan.coverage.complete)
+        throw new Error("Feature discovery needs attention: no supported source was scanned or the scan limit was reached. No feature evidence was submitted. Ask your developer to review scanner coverage before retrying.");
       if (!scan.ok)
         throw new Error(
           "Feature discovery needs attention. Run features setup to review the local findings.",
@@ -268,6 +274,7 @@ export async function runGuidedSetup(options: Options) {
       );
     }
     stage = "plans";
+    if (!context.catalogReady) options.progress?.("Waiting for your Stripe catalog. Setup can stay open while it imports…");
     const catalogDeadline = Date.now() + 5 * 60_000;
     const generation = context.generation;
     while (!context.catalogReady && Date.now() < catalogDeadline) {
@@ -283,9 +290,10 @@ export async function runGuidedSetup(options: Options) {
       return {
         exitCode: 2,
         stdout:
-          "Stripe is still importing. Run setup run --resume --send when the catalog is ready.\n",
+          "Stripe is still importing. Run npx --yes saasfunnels@latest setup --resume when the catalog is ready.\n",
         stderr: "",
       };
+    options.progress?.(run.receipts.plans ? "3/4 Plans already submitted." : "3/4 Discovering plans and prices…");
     if (!run.receipts.plans) {
       await update("running");
       const candidates = await discoverPlanSourceCandidates({
@@ -336,13 +344,14 @@ export async function runGuidedSetup(options: Options) {
         return {
           exitCode: 2,
           stdout:
-            "Pricing discovery needs manual review. Create .saasfunnels/setup-pricing.json with a plans array containing key, name, features (boolean or numeric access), and prices (Stripe price IDs). Review it, then run setup run --resume --send. No source files were uploaded.\n",
+            "Pricing discovery needs manual review. Create .saasfunnels/setup-pricing.json with a plans array containing key, name, features (boolean or numeric access), and prices (Stripe price IDs). Review it, then run npx --yes saasfunnels@latest setup --resume. No source files were uploaded.\n",
           stderr: "",
         };
       }
     }
     stage = "branches";
     const planValues = [...new Set([...context.planNames, ...(run.planNames ?? [])])];
+    options.progress?.(run.receipts.branches ? "4/4 Plan checks already submitted." : "4/4 Checking plan conditions…");
     if (!run.receipts.branches) {
       await update("running");
       const branches = planValues.length
@@ -376,7 +385,7 @@ export async function runGuidedSetup(options: Options) {
     return {
       exitCode: 0,
       stdout:
-        "Discovery submitted. Return to Setup to review findings and verify installation. Payment transactions have not been tested by this command.\n",
+        "Discovery submitted. Open https://app.saasfunnels.ai/app/setup to review findings and verify installation. Payment transactions have not been tested by this command.\n",
       stderr: "",
     };
   } catch (error) {
@@ -385,7 +394,7 @@ export async function runGuidedSetup(options: Options) {
     // Never print provider bodies, environment values, or credential-bearing git errors.
     const safe =
       error instanceof Error &&
-      /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery)/.test(
+      /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery|Repository setup)/.test(
         error.message,
       )
         ? error.message

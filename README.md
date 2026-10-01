@@ -10,11 +10,15 @@ This repository contains only the MIT-licensed CLI and its bounded runtime contr
 
 ## Install
 
-Install the stable CLI:
+Start in your app repository:
 
 ```bash
-npm install --global saasfunnels
+npx --yes saasfunnels@latest setup
 ```
+
+The explicit version tag avoids running an older project-local CLI. Setup asks where developer access is saved (Doppler or `.env.local`) when needed, requests approval before uploading findings, and shows each discovery stage. It never prints keys, rewrites env files, deploys your app, or approves inferred plans. Connect Stripe and create app credentials in the web Setup first. `setup run` remains a compatible entry point.
+
+For scripts, use `--env-file .env.local --send --non-interactive`, or inject `SAASFUNNELS_API_KEY` from your secret manager. Without explicit approval, non-interactive runs stop without uploading. Run `setup --help` for setup-only guidance. Runtime implementation and payment verification remain in the web Setup.
 
 ## Use
 
@@ -51,7 +55,7 @@ approved set is reviewable.
     discovery-roots: app,lib
 ```
 
-On a pull request the Action scans as a `candidate`: the result is compared
+The Action uploads an existing feature manifest; it does not freshly scan application source. On a pull request the upload is a `candidate`: the result is compared
 against the branch's baseline and discarded. Only the default branch advances
 the lineage. Changing `discovery-roots` starts a new lineage, so drift is
 measured against a comparable scan rather than a wider or narrower one.
