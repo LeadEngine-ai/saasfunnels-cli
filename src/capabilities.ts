@@ -10,6 +10,7 @@ export type AgentCapabilityId =
   | "funnel.entry.inspect"
   | "funnel.entry.plan"
   | "funnel.entry.test"
+  | "funnel.workspace.read"
   | "setup.test_event.send";
 
 type AgentExecutionBoundary =
@@ -102,6 +103,10 @@ const registry: Readonly<Record<AgentCapabilityId, Capability>> = Object.freeze(
     "local_cli",
     "local_mcp",
     "api_key",
+  ]),
+  "funnel.workspace.read": capability("funnel.workspace.read", "read", [
+    "in_app",
+    "hosted_mcp",
   ]),
   "setup.test_event.send": capability("setup.test_event.send", "external_write", [
     "local_cli",

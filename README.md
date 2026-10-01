@@ -73,6 +73,12 @@ Hosted interactive MCP uses Clerk OAuth at the application `/mcp` URL and does n
 
 The application imports the exact versioned MCP registry through the server-side `saasfunnels/library` export. This keeps hosted Streamable HTTP and local stdio MCP on one package owner; it is not a browser API.
 
+In hosted OAuth, `list_workspaces` discovers accessible workspace names and IDs. Live read, inspect, and plan tools accept an optional `workspace_id`. The hosted application must select the sole accessible workspace automatically, require an explicit ID when several are accessible, recheck authorization for every call, and include the selected workspace name and ID in each live response. The application passes the selection through to its developer API as the `workspace_id` query parameter. Local stdio API-key tools do not expose workspace selection; their key stays pinned to its workspace.
+
+For Funnel discovery, hosted MCP offers `list_funnels` and `get_funnel_state`. `list_funnels` returns at most 50 summaries per page; follow `page.hasMore` with the next `offset` to cover the workspace. The app returns the selected workspace and evaluation time with each read. `get_funnel_state` reports the current lifecycle and publication readiness for one Funnel. These reads do not include Funnel definitions, customer data, or Results. Signals remain supporting evidence and enrollment inputs.
+
+For performance, `get_portfolio_results` and `get_funnel_results` use a 7d, 30d, 90d, or 12m reporting window (30d by default). Portfolio rows are paged at 50 Funnels and cover at most the first 100; check `page.has_more` and `funnels_truncated` before claiming complete coverage. Stage counts and revenue rows retain their distinct attribution, value basis, and currency. `list_opportunities` and `list_leads` return at most 50 records per page with `page.total_count` and `page.has_more`; `get_opportunity` and `get_lead` return one bounded record. Opportunity reads omit private evidence and money; Lead reads omit personal identity and raw responses. These six reads require hosted OAuth, an accessible selected workspace, and the app's `funnels.view` role check.
+
 ## Development
 
 ```bash

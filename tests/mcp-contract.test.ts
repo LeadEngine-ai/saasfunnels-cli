@@ -1,7 +1,9 @@
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
+  callSaaSFunnelsMcpTool,
   handleSaaSFunnelsMcpMessage,
+  hostedSaaSFunnelsMcpToolDefinitions,
   SAASFUNNELS_MCP_PROTOCOL_VERSION,
   saasFunnelsMcpResources,
   saasFunnelsMcpToolDefinitions,
@@ -42,6 +44,252 @@ async function toolCall(
 }
 
 describe("SaaSFunnels MCP server", () => {
+  it("exposes workspace selection only on hosted live tools", () => {
+    const local = saasFunnelsMcpToolDefinitions();
+    const hosted = hostedSaaSFunnelsMcpToolDefinitions();
+    expect(local.map((tool) => tool.name)).not.toContain("list_workspaces");
+    expect(hosted.map((tool) => tool.name)).toContain("list_workspaces");
+    for (const name of [
+      "get_integration_health",
+      "get_funnel_results",
+      "get_funnel_state",
+      "get_lead",
+      "get_opportunity",
+      "get_portfolio_results",
+      "get_workspace_readiness",
+      "list_mapping_gaps",
+      "list_recent_signals",
+      "get_signal_payload_preview",
+      "inspect_funnel_entry",
+      "list_funnels",
+      "list_leads",
+      "list_opportunities",
+      "propose_funnel_entry_installation",
+      "get_account_strategy",
+      "simulate_account_funnel_fit",
+    ]) {
+      const hostedTool = hosted.find((tool) => tool.name === name)!;
+      expect((hostedTool.inputSchema.properties as any).workspace_id).toMatchObject({
+        type: "string",
+      });
+      const localTool = local.find((tool) => tool.name === name);
+      if (localTool) {
+        expect((localTool.inputSchema.properties as any).workspace_id).toBeUndefined();
+      }
+    }
+    expect((hosted.find((tool) => tool.name === "list_workspaces")!.inputSchema.properties as any).workspace_id).toBeUndefined();
+    expect(hosted.some((tool) => tool.annotations?.readOnlyHint === false)).toBe(false);
+  });
+
+  it("discovers hosted workspaces and forwards an explicit workspace ID for live calls", async () => {
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      calls.push(String(url));
+      return response({
+        data: { workspaces: [{ id: workspaceId, name: "Sales Ops" }] },
+        ok: true,
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+
+    const discovered = await callSaaSFunnelsMcpTool("list_workspaces", {}, options);
+    const readiness = await callSaaSFunnelsMcpTool(
+      "get_workspace_readiness",
+      { workspace_id: workspaceId },
+      options,
+    );
+    const plan = await callSaaSFunnelsMcpTool(
+      "propose_funnel_entry_installation",
+      {
+        entry_kind: "event",
+        funnel_id: "funnel-1",
+        intent: "onboarding",
+        workspace_id: workspaceId,
+      },
+      options,
+    );
+
+    expect(calls).toEqual([
+      "https://app.saasfunnels.test/api/developer-tools/workspaces",
+      `https://app.saasfunnels.test/api/developer-tools/signals/readiness?workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/funnels/funnel-1/entry/plan?workspace_id=${workspaceId}`,
+    ]);
+    expect(discovered.structuredContent).toMatchObject({
+      data: { workspaces: [{ id: workspaceId, name: "Sales Ops" }] },
+    });
+    expect(readiness.structuredContent).toMatchObject({ ok: true });
+    expect(plan.structuredContent).toMatchObject({ ok: true });
+  });
+
+  it("keeps local API-key calls pinned to the key workspace", async () => {
+    const fetchImpl = vi.fn(async () => response({ ok: true })) as unknown as typeof fetch;
+    const result = await toolCall(
+      "get_workspace_readiness",
+      { workspace_id: "11111111-1111-4111-8111-111111111111" },
+      { env: { SAASFUNNELS_API_KEY: rawDeveloperKey }, fetch: fetchImpl },
+    );
+    expect(result?.error).toMatchObject({ code: -32602 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const discovery = await toolCall("list_workspaces", {});
+    expect((discovery?.result as any).isError).toBe(true);
+  });
+
+  it("lists bounded Funnels and reads one state with hosted workspace selection", async () => {
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
+    const funnelId = "22222222-2222-4222-8222-222222222222";
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      return response({
+        data: { evaluated_at: "2026-09-23T00:00:00.000Z", has_more: false },
+        ok: true,
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+
+    const listed = await callSaaSFunnelsMcpTool(
+      "list_funnels",
+      { include_archived: true, limit: 50, offset: 25, workspace_id: workspaceId },
+      options,
+    );
+    const detail = await callSaaSFunnelsMcpTool(
+      "get_funnel_state",
+      { funnel_id: funnelId, workspace_id: workspaceId },
+      options,
+    );
+
+    expect(urls).toEqual([
+      `https://app.saasfunnels.test/api/developer-tools/funnels?include_archived=true&limit=50&offset=25&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/funnels/${funnelId}?workspace_id=${workspaceId}`,
+    ]);
+    expect(listed.structuredContent).toMatchObject({ ok: true });
+    expect(detail.structuredContent).toMatchObject({ ok: true });
+  });
+
+  it("rejects invalid Funnel inputs and local access before fetching", async () => {
+    const fetchImpl = vi.fn(async () => response({ ok: true })) as unknown as typeof fetch;
+    const hosted = { authorizationHeader: "Bearer hosted-oauth", fetch: fetchImpl, hostedMode: true };
+    for (const args of [
+      { limit: 51 },
+      { offset: -1 },
+      { include_archived: "yes" },
+    ]) {
+      const result = await toolCall("list_funnels", args, hosted);
+      expect(result?.error).toMatchObject({ code: -32602 });
+    }
+    const invalidId = await toolCall("get_funnel_state", { funnel_id: "other" }, hosted);
+    expect(invalidId?.error).toMatchObject({ code: -32602 });
+    const local = await toolCall("list_funnels", {}, { env: { SAASFUNNELS_API_KEY: rawDeveloperKey }, fetch: fetchImpl });
+    expect((local?.result as any).isError).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("routes Results, Opportunity, and Lead reads through hosted workspace selection", async () => {
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
+    const funnelId = "22222222-2222-4222-8222-222222222222";
+    const itemId = "33333333-3333-4333-8333-333333333333";
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      return response({
+        ok: true,
+        data: { workspace_id: workspaceId, data_status: "live", evaluated_at: "2026-09-23T00:00:00Z" },
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["get_portfolio_results", { workspace_id: workspaceId, window: "90d", funnel_id: funnelId, objective: "grow", attribution_role: "direct", limit: 50, offset: 25 }],
+      ["get_funnel_results", { workspace_id: workspaceId, funnel_id: funnelId, window: "7d" }],
+      ["list_opportunities", { workspace_id: workspaceId, funnel_id: funnelId, state: "detected", limit: 50, offset: 75 }],
+      ["get_opportunity", { workspace_id: workspaceId, opportunity_id: itemId }],
+      ["list_leads", { workspace_id: workspaceId, funnel_id: funnelId, state: "new", limit: 50, offset: 100 }],
+      ["get_lead", { workspace_id: workspaceId, lead_id: itemId }],
+    ];
+    for (const [name, args] of calls) {
+      const result = await callSaaSFunnelsMcpTool(name, args, options);
+      expect(result.structuredContent).toMatchObject({ ok: true, data: { workspace_id: workspaceId } });
+    }
+    expect(urls).toEqual([
+      `https://app.saasfunnels.test/api/developer-tools/results?window=90d&limit=50&offset=25&funnel_id=${funnelId}&objective=grow&attribution_role=direct&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/funnels/${funnelId}/results?window=7d&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/opportunities?limit=50&offset=75&funnel_id=${funnelId}&state=detected&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/opportunities/${itemId}?workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/leads?limit=50&offset=100&funnel_id=${funnelId}&state=new&workspace_id=${workspaceId}`,
+      `https://app.saasfunnels.test/api/developer-tools/leads/${itemId}?workspace_id=${workspaceId}`,
+    ]);
+  });
+
+  it("rejects invalid read filters and local access without fetching", async () => {
+    const fetchImpl = vi.fn(async () => response({ ok: true })) as unknown as typeof fetch;
+    const hosted = { authorizationHeader: "Bearer hosted-oauth", fetch: fetchImpl, hostedMode: true };
+    for (const [name, args] of [
+      ["get_portfolio_results", { window: "forever" }],
+      ["get_portfolio_results", { offset: 101 }],
+      ["get_portfolio_results", { objective: "other" }],
+      ["get_portfolio_results", { attribution_role: "primary" }],
+      ["get_funnel_results", { funnel_id: "other" }],
+      ["list_opportunities", { limit: 51 }],
+      ["list_opportunities", { state: "unknown" }],
+      ["list_leads", { offset: -1 }],
+      ["list_leads", { state: "unknown" }],
+      ["get_opportunity", { opportunity_id: "other" }],
+      ["get_lead", { lead_id: "other" }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      const result = await toolCall(name, args, hosted);
+      expect(result?.error).toMatchObject({ code: -32602 });
+    }
+    for (const name of ["get_portfolio_results", "get_funnel_results", "list_opportunities", "get_opportunity", "list_leads", "get_lead"]) {
+      const result = await toolCall(name, {}, { env: { SAASFUNNELS_API_KEY: rawDeveloperKey }, fetch: fetchImpl });
+      expect((result?.result as any).isError).toBe(true);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps default windows, empty pages, and backend failures explicit", async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+      urls.push(String(url));
+      if (String(url).includes("/opportunities")) {
+        return response({ ok: false, error: "reporting unavailable" }, 503);
+      }
+      return response({
+        ok: true,
+        data: { data_status: "live", leads: [], lead: null, page: { total_count: 0, has_more: false } },
+      });
+    }) as unknown as typeof fetch;
+    const options = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+    await callSaaSFunnelsMcpTool("get_portfolio_results", {}, options);
+    const empty = await callSaaSFunnelsMcpTool("list_leads", {}, options);
+    const unavailable = await callSaaSFunnelsMcpTool("list_opportunities", {}, options);
+    expect(urls).toEqual([
+      "https://app.saasfunnels.test/api/developer-tools/results?window=30d&limit=50&offset=0",
+      "https://app.saasfunnels.test/api/developer-tools/leads?limit=25&offset=0",
+      "https://app.saasfunnels.test/api/developer-tools/opportunities?limit=25&offset=0",
+    ]);
+    expect(empty.structuredContent).toMatchObject({ data: { leads: [], page: { total_count: 0, has_more: false } } });
+    expect(unavailable).toMatchObject({ isError: true, structuredContent: { status: 503, ok: false } });
+  });
   it("negotiates initialize and lists read-only tools/resources by default", async () => {
     const initialized = await handleSaaSFunnelsMcpMessage({
       id: 1,
