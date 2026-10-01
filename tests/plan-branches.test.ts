@@ -35,9 +35,9 @@ describe("plan branch discovery", () => {
   it("keeps comparisons against catalog plans and drops everything else", async () => {
     const cwd = await fixture({
       "src/gate.ts": [
-        'if (plan === "pro") { enableExports(); }',
+        'if (plan === "pro") { enableExports(); } else { requireUpgrade(); }',
         'if (status === "active") { render(); }',
-        'if (level === "enterprise") { sso(); }',
+        'if (tier === "enterprise") { sso(); } else { requireUpgrade(); }',
         'if (mode === "error") { log(); }',
         'if (logLevel === "warn") { log(); }',
       ].join("\n"),
@@ -45,7 +45,7 @@ describe("plan branch discovery", () => {
 
     const branches = await discoverPlanBranches({ cwd, planValues: plans });
 
-    // `level === "enterprise"` qualifies on its value, not its name; `status`
+    // `tier === "enterprise"` qualifies on its value, not its name; `status`
     // and `mode` are rejected because their values are not plans.
     expect(branches.map((branch) => branch.planValue).sort()).toEqual([
       "enterprise",
@@ -55,29 +55,35 @@ describe("plan branch discovery", () => {
 
   it("returns nothing without a catalog rather than guessing", async () => {
     const cwd = await fixture({
-      "src/gate.ts": 'if (plan === "pro") { enableExports(); }\n',
+      "src/gate.ts":
+        'if (plan === "pro") { enableExports(); } else { requireUpgrade(); }\n',
     });
     expect(await discoverPlanBranches({ cwd, planValues: [] })).toEqual([]);
   });
 
-  it("reads denial from a bail-out, an upgrade prompt, or the binding's own name", async () => {
+  it("requires an actual consequence and keeps presentation separate", async () => {
     const cwd = await fixture({
       "src/a.ts": 'if (plan === "free") {\n  throw new Error("upgrade");\n}\n',
-      "src/b.tsx": 'const gate = plan === "free" ? <UpgradeModal /> : children;\n',
-      "src/c.ts": 'const needsHigherPlan = plan === "free" || plan === "pro";\n',
+      "src/b.tsx":
+        'const gate = plan === "free" ? <UpgradeModal /> : children;\n',
+      "src/c.ts":
+        'const needsHigherPlan = plan === "free" || plan === "pro";\n',
       "src/d.ts": 'if (plan === "pro") {\n  renderChart();\n}\n',
     });
 
     const branches = await discoverPlanBranches({ cwd, planValues: plans });
     const polarity = Object.fromEntries(
-      branches.map((branch) => [`${branch.repositoryPath}:${branch.line}`, branch.polarity]),
+      branches.map((branch) => [
+        `${branch.repositoryPath}:${branch.line}`,
+        branch.polarity,
+      ]),
     );
 
     expect(polarity["src/a.ts:1"]).toBe("deny");
-    expect(polarity["src/b.tsx:1"]).toBe("deny");
-    expect(polarity["src/c.ts:1"]).toBe("deny");
+    expect(polarity["src/b.tsx:1"]).toBe("unclear");
+    expect(polarity["src/c.ts:1"]).toBeUndefined();
     // Nothing here says which way the branch runs, so it is not decided.
-    expect(polarity["src/d.ts:1"]).toBe("unclear");
+    expect(polarity["src/d.ts:1"]).toBeUndefined();
   });
 
   it("resolves an enum member declared in another file", async () => {
@@ -87,8 +93,8 @@ describe("plan branch discovery", () => {
       "src/billing/plan-key.enum.ts":
         "export enum BillingPlanKey {\n  PRO = 'PRO',\n  ENTERPRISE = 'ENTERPRISE',\n}\n",
       "src/billing/flags.ts":
-        "const isProPlan = planKey === BillingPlanKey.PRO;\n" +
-        "const isEnterprise = currentPlan.planKey === BillingPlanKey.ENTERPRISE;\n",
+        "import { BillingPlanKey } from './plan-key.enum';\nconst isProPlan = planKey === BillingPlanKey.PRO;\n" +
+        "const isEnterprise = currentPlan.planKey === BillingPlanKey.ENTERPRISE;\nif (!isProPlan) requireUpgrade();\nif (!isEnterprise) requireUpgrade();\n",
     });
 
     const branches = await discoverPlanBranches({
@@ -107,8 +113,8 @@ describe("plan branch discovery", () => {
       "src/tiers.ts":
         "export const TIERS = {\n  PRO: 'pro',\n} as const;\nexport const FREE_PLAN = 'free';\n",
       "src/gate.ts":
-        "if (subscriptionTier === TIERS.PRO) { chart(); }\n" +
-        "if (workspace.plan === FREE_PLAN) { upsell(); }\n",
+        "import { TIERS, FREE_PLAN } from './tiers';\nif (subscriptionTier === TIERS.PRO) { chart(); } else { requireUpgrade(); }\n" +
+        "if (workspace.plan === FREE_PLAN) { requireUpgrade(); }\n",
     });
 
     const branches = await discoverPlanBranches({
@@ -125,7 +131,7 @@ describe("plan branch discovery", () => {
     const cwd = await fixture({
       "src/a.ts": "export const LEVEL = 'pro';\n",
       "src/b.ts": "export const LEVEL = 'free';\n",
-      "src/gate.ts": "if (plan === LEVEL) { chart(); }\n",
+      "src/gate.ts": "if (plan === LEVEL) { requireUpgrade(); }\n",
     });
     // Ambiguous across the tree, so it resolves to nothing rather than picking.
     expect(
@@ -135,14 +141,15 @@ describe("plan branch discovery", () => {
 
   it("ignores an identifier it cannot resolve", async () => {
     const cwd = await fixture({
-      "src/gate.ts": "if (plan === somethingImported) { chart(); }\n",
+      "src/gate.ts": "if (plan === somethingImported) { requireUpgrade(); }\n",
     });
     expect(await discoverPlanBranches({ cwd, planValues: plans })).toEqual([]);
   });
 
   it("matches a plan value whatever its casing", async () => {
     const cwd = await fixture({
-      "src/gate.ts": 'if (plan === "Pro") { chart(); }\n',
+      "src/gate.ts":
+        'if (plan === "Pro") { chart(); } else { requireUpgrade(); }\n',
     });
     const [branch] = await discoverPlanBranches({ cwd, planValues: plans });
     expect(branch?.planValue).toBe("pro");
@@ -150,7 +157,7 @@ describe("plan branch discovery", () => {
 
   it("marks a branch between two numbers as a limit rather than a boolean", async () => {
     const cwd = await fixture({
-      "src/quota.ts": 'const seats = plan === "free" ? 3 : 100;\n',
+      "src/quota.ts": 'const seatLimit = plan === "free" ? 3 : 100;\n',
     });
     const [branch] = await discoverPlanBranches({ cwd, planValues: plans });
     expect(branch?.shape).toBe("limit");
@@ -164,7 +171,7 @@ describe("plan branch discovery", () => {
     expect(await discoverPlanBranches({ cwd, planValues: plans })).toEqual([]);
   });
 
-  it("groups by directory and lets stated denial outweigh silence", () => {
+  it("groups by file and symbol and lets stated denial outweigh silence", () => {
     const branch = (overrides: Partial<PlanBranch>): PlanBranch => ({
       line: 1,
       planValue: "free",
@@ -182,12 +189,15 @@ describe("plan branch discovery", () => {
     ]);
 
     expect(clusters).toHaveLength(2);
-    const billing = clusters.find((item) => item.location === "app/billing")!;
+    const billing = clusters.find(
+      (item) => item.location === "app/billing/gate.ts::gate",
+    )!;
     expect(billing.planValues).toEqual(["free", "pro"]);
     // One sibling plainly restricts and none contradicts it, so the group does.
     expect(billing.polarity).toBe("deny");
     expect(
-      clusters.find((item) => item.location === "app/exports")!.polarity,
+      clusters.find((item) => item.location === "app/exports/gate.ts::gate")!
+        .polarity,
     ).toBe("unclear");
   });
 
@@ -214,7 +224,7 @@ describe("output redaction", () => {
       // 41 characters, no digits — indistinguishable from an opaque token under
       // a length-only rule, and the reason twenty's branches were unreadable.
       "src/billing/SettingsBillingTrialNoPaymentMethodBanner.tsx":
-        'if (plan === "pro") { render(); }\n',
+        'if (plan === "pro") { render(); } else { requireUpgrade(); }\n',
     });
 
     const result = await runSaaSFunnelsCli(
@@ -233,10 +243,17 @@ describe("output redaction", () => {
   it("still redacts a credential that reaches human-readable output", async () => {
     const cwd = await fixture({ "src/plans.ts": "export const PLANS = {};\n" });
     const result = await runSaaSFunnelsCli(
-      ["plans", "handoff", "--integration-id", "pv_live_9f2a7c4b8e1d6a35f0c9b2e7"],
+      [
+        "plans",
+        "handoff",
+        "--integration-id",
+        "pv_live_9f2a7c4b8e1d6a35f0c9b2e7",
+      ],
       { cwd, env: {} },
     );
-    expect(result.stderr + result.stdout).not.toContain("9f2a7c4b8e1d6a35f0c9b2e7");
+    expect(result.stderr + result.stdout).not.toContain(
+      "9f2a7c4b8e1d6a35f0c9b2e7",
+    );
   });
 });
 
@@ -251,9 +268,14 @@ describe("plan branch handoff", () => {
     let sent: any;
     const result = await runSaaSFunnelsCli(
       [
-        "plans", "branches", "--plans", "free,pro",
-        "--repository-key", "github.com/acme/app",
-        "--repository-revision", "main@abc123",
+        "plans",
+        "branches",
+        "--plans",
+        "free,pro",
+        "--repository-key",
+        "github.com/acme/app",
+        "--repository-revision",
+        "main@abc123",
         "--send",
       ],
       {
@@ -262,7 +284,10 @@ describe("plan branch handoff", () => {
         fetch: async (_url: string, init: any) => {
           sent = JSON.parse(init.body);
           return {
-            json: async () => ({ data: { clusterCount: 1, reviewUrl: "/review" }, ok: true }),
+            json: async () => ({
+              data: { clusterCount: 1, reviewUrl: "/review" },
+              ok: true,
+            }),
             ok: true,
           };
         },
@@ -273,7 +298,7 @@ describe("plan branch handoff", () => {
     expect(sent.schemaVersion).toBe(1);
     expect(sent.producer).toBe("cli");
     const [cluster] = sent.clusters;
-    expect(cluster.location).toBe("src/billing");
+    expect(cluster.location).toBe("src/billing/gate.ts::module");
     expect(cluster.branches[0]).toMatchObject({
       line: 1,
       planValue: "free",
@@ -281,7 +306,13 @@ describe("plan branch handoff", () => {
     });
     // The whole reason this path needs no approval file.
     const serialized = JSON.stringify(sent);
-    for (const forbidden of ["sourceCode", "snippet", "rawSource", '"source"', '"content"']) {
+    for (const forbidden of [
+      "sourceCode",
+      "snippet",
+      "rawSource",
+      '"source"',
+      '"content"',
+    ]) {
       expect(serialized).not.toContain(forbidden);
     }
     expect(serialized).not.toContain("throw new Error");
@@ -290,7 +321,15 @@ describe("plan branch handoff", () => {
   it("refuses to send without a key or a revision", async () => {
     const cwd = await fixture(scanned);
     const noRevision = await runSaaSFunnelsCli(
-      ["plans", "branches", "--plans", "free", "--repository-key", "r", "--send"],
+      [
+        "plans",
+        "branches",
+        "--plans",
+        "free",
+        "--repository-key",
+        "r",
+        "--send",
+      ],
       { cwd, env: { SAASFUNNELS_API_KEY: "pv_test_key" } } as any,
     );
     expect(noRevision.exitCode).toBe(2);
@@ -298,8 +337,15 @@ describe("plan branch handoff", () => {
 
     const noKey = await runSaaSFunnelsCli(
       [
-        "plans", "branches", "--plans", "free",
-        "--repository-key", "r", "--repository-revision", "s", "--send",
+        "plans",
+        "branches",
+        "--plans",
+        "free",
+        "--repository-key",
+        "r",
+        "--repository-revision",
+        "s",
+        "--send",
       ],
       { cwd, env: {} } as any,
     );

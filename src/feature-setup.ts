@@ -1,3 +1,8 @@
+import {
+  extractSetupPricing,
+  PricingExtractionError,
+} from "./setup-pricing.js";
+import { namedFeatureEvidence, nonProductPath } from "./source-analysis.js";
 import { repositorySourceScope } from "./source-scope.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -24,6 +29,7 @@ const featureBindingKinds = [
   "discovery",
 ] as const;
 export const defaultRoots = [
+  ".",
   "app",
   "src",
   "lib",
@@ -33,9 +39,12 @@ export const defaultRoots = [
   "packages",
   "server",
   "client",
+  "config",
 ];
 export const ignoredSegments = new Set([
   ".claude",
+  ".agents",
+  ".codex",
   ".git",
   ".next",
   ".output",
@@ -176,6 +185,8 @@ export type FeatureSetupInput = {
   fetch?: typeof fetch;
   include?: string[];
   manifestOnly: boolean;
+  /** Guided rescans replace machine findings; local generated files remain untouched. */
+  freshDiscovery?: boolean;
   mappings?: Record<string, string>;
   prompt?: (message: string) => Promise<string>;
   reject?: string[];
@@ -275,7 +286,8 @@ async function exists(path: string) {
 
 function allowedPath(path: string, excludes: string[]) {
   const normalized = path.replaceAll("\\", "/");
-  if (sensitivePathPattern.test(normalized)) return false;
+  if (sensitivePathPattern.test(normalized) || nonProductPath.test(normalized))
+    return false;
   const segments = normalized.split("/");
   if (
     segments.some(
@@ -306,9 +318,9 @@ async function walkFiles(input: {
     seen.add(current);
     const relativePath = safeRelative(input.cwd, current);
     if (
-      !relativePath ||
-      !inRepository(relativePath) ||
-      !allowedPath(relativePath, input.excludes)
+      (relativePath === null && current !== resolve(input.cwd)) ||
+      !inRepository(relativePath ?? "") ||
+      !allowedPath(relativePath ?? "", input.excludes)
     )
       continue;
     let currentStat;
@@ -324,7 +336,14 @@ async function walkFiles(input: {
         .forEach((entry) => queue.push(join(current, entry.name)));
       continue;
     }
-    if (currentStat.isFile() && supportedExtensions.has(extname(current))) {
+    if (
+      currentStat.isFile() &&
+      (supportedExtensions.has(extname(current)) ||
+        (/\.(json|ya?ml)$/.test(current) &&
+          /(?:^|[\/._-])(plans?|pricing|entitlements?|catalog|tiers?|features|quotas)(?:[._-]|$)/i.test(
+            relativePath ?? "",
+          )))
+    ) {
       if (currentStat.size > 2_000_000) {
         oversizedFileCount++;
         continue;
@@ -350,104 +369,89 @@ function nearestSymbol(lines: string[], lineIndex: number) {
 }
 
 function candidatesFromFile(path: string, source: string): FeatureCandidate[] {
-  const lines = source.split(/\r?\n/);
-  const candidates: FeatureCandidate[] = [];
-  const patterns: Array<{
-    accessModel: "boolean" | "limit";
-    bindingKind: (typeof featureBindingKinds)[number];
-    confidenceBasisPoints: number;
-    pattern: RegExp;
-    rationale: string;
-    unit: string | null;
-  }> = [
-    {
-      accessModel: "boolean",
-      confidenceBasisPoints: 9_800,
-      pattern:
-        /(?:hasFeature\s*\(|checkFeature\s*\(|checkEntitlement\s*\(|isFeatureEnabled\s*\()["'`]([a-z][a-z0-9_.-]{1,79})["'`]/g,
-      bindingKind: "server_enforcement",
-      rationale: "Existing server Feature or entitlement check",
-      unit: null,
+  const named: FeatureCandidate[] = namedFeatureEvidence(path, source).map(
+    (evidence) => {
+      const fingerprint = sha256(
+        JSON.stringify([
+          path,
+          evidence.key,
+          evidence.model,
+          evidence.line,
+          evidence.symbol,
+        ]),
+      );
+      return {
+        accessModel: evidence.model,
+        bindingIdentityFingerprint: sha256(
+          JSON.stringify([evidence.kind, evidence.key, evidence.symbol]),
+        ),
+        bindingKind: evidence.kind,
+        confidenceBasisPoints:
+          evidence.kind === "server_enforcement" ? 9800 : 9000,
+        file: path,
+        fingerprint,
+        id: fingerprint.slice(0, 12),
+        line: evidence.line,
+        name: displayName(evidence.key),
+        rationale: evidence.reason,
+        suggestedKey: evidence.key,
+        symbol: evidence.symbol,
+        unit: null,
+      };
     },
-    {
-      accessModel: "boolean",
-      bindingKind: "browser_presentation",
-      confidenceBasisPoints: 9_600,
-      pattern:
-        /<FeatureGate[^>]*featureKey\s*=\s*["'`]([a-z][a-z0-9_.-]{1,79})["'`]/g,
-      rationale: "Existing browser Feature presentation gate",
-      unit: null,
-    },
-    {
-      accessModel: "limit",
-      bindingKind: "usage_reporter",
-      confidenceBasisPoints: 9_300,
-      pattern:
-        /(?:usageKey|limitKey|meterKey|featureLimit)\s*[:=]\s*["'`]([a-z][a-z0-9_.-]{1,79})["'`]/g,
-      rationale: "Existing usage or limit key",
-      unit: "uses",
-    },
-    {
-      accessModel: "boolean",
-      bindingKind: "funnel_trigger",
-      confidenceBasisPoints: 8_900,
-      pattern:
-        /(?:deniedFeatureKey|featureDenied|onFeatureDenied)\s*[:=(]\s*["'`]([a-z][a-z0-9_.-]{1,79})["'`]/g,
-      rationale: "Denied-access Funnel trigger",
-      unit: null,
-    },
-    {
-      accessModel: "boolean",
-      bindingKind: "discovery",
-      confidenceBasisPoints: 7_600,
-      pattern:
-        /(?:featureKey\s*[:=]\s*|(?:FEATURES?|ENTITLEMENTS?)\s*(?:=|:)\s*(?:\{|\[)[^\n]*?)["'`]([a-z][a-z0-9_.-]{1,79})["'`]/g,
-      rationale: "Feature or entitlement constant",
-      unit: null,
-    },
-  ];
-  patterns.forEach((definition) => {
-    lines.forEach((line, lineIndex) => {
-      definition.pattern.lastIndex = 0;
-      let match;
-      while ((match = definition.pattern.exec(line))) {
-        const key = stableKey(match[1] ?? "");
-        const symbol = nearestSymbol(lines, lineIndex);
-        const fingerprint = sha256(
-          JSON.stringify({
-            accessModel: definition.accessModel,
-            file: path,
-            key,
-            line: lineIndex + 1,
-            symbol,
-          }),
-        );
-        const bindingIdentityFingerprint = sha256(
-          JSON.stringify({
-            bindingKind: definition.bindingKind,
-            rationale: definition.rationale,
-            symbol,
-          }),
-        );
-        candidates.push({
-          accessModel: definition.accessModel,
-          bindingIdentityFingerprint,
-          bindingKind: definition.bindingKind,
-          confidenceBasisPoints: definition.confidenceBasisPoints,
-          file: path,
-          fingerprint,
-          id: fingerprint.slice(0, 12),
-          line: lineIndex + 1,
-          name: displayName(key),
-          rationale: definition.rationale,
-          suggestedKey: key,
-          symbol,
-          unit: definition.unit,
-        });
+  );
+  if (nonProductPath.test(path)) return named;
+  try {
+    const plans = extractSetupPricing(
+      source,
+      /\.json$/.test(path)
+        ? "json"
+        : /\.ya?ml$/.test(path)
+          ? "yaml"
+          : "typescript",
+      [],
+      { featuresOnly: true },
+    );
+    const features = new Map<string, "boolean" | "limit">();
+    for (const plan of plans)
+      for (const [key, value] of Object.entries(plan.features)) {
+        const model = typeof value === "boolean" ? "boolean" : "limit";
+        if (features.get(key) === "limit" && model === "boolean") continue;
+        features.set(key, model);
       }
-    });
-  });
-  return candidates;
+    for (const [key, model] of features) {
+      const line = Math.max(
+        1,
+        source.slice(0, Math.max(0, source.indexOf(key))).split(/\r?\n/).length,
+      );
+      const fingerprint = sha256(
+        JSON.stringify([path, key, model, "plan_catalog"]),
+      );
+      named.push({
+        accessModel: model,
+        bindingIdentityFingerprint: fingerprint,
+        bindingKind: "discovery",
+        confidenceBasisPoints: 9900,
+        file: path,
+        fingerprint,
+        id: fingerprint.slice(0, 12),
+        line,
+        name: displayName(key),
+        rationale:
+          model === "limit"
+            ? "Usage limit declared in application plans"
+            : "Feature access declared in application plans",
+        suggestedKey: key,
+        symbol: "plan_catalog",
+        unit: null,
+      });
+    }
+  } catch (error) {
+    if (!(error instanceof PricingExtractionError)) throw error;
+    // Pricing coverage is assessed by the dedicated stage, which reports
+    // dynamic/unsupported declarations instead of silently accepting them.
+  }
+  return named;
 }
 
 async function detectFramework(cwd: string, requestedRoots?: string[]) {
@@ -827,9 +831,10 @@ export async function runFeatureSetup(
   const existingManifestSource = await readable(
     resolve(input.cwd, manifestPath),
   );
-  const existingManifestValidation = existingManifestSource
-    ? parseFeatureManifestSource(existingManifestSource)
-    : null;
+  const existingManifestValidation =
+    existingManifestSource && !input.freshDiscovery
+      ? parseFeatureManifestSource(existingManifestSource)
+      : null;
   if (existingManifestValidation && !existingManifestValidation.ok) {
     throw new Error(
       `The existing ${manifestPath} is invalid. Run \`saasfunnels catalog validate\` and repair it before setup.`,
@@ -889,7 +894,7 @@ export async function runFeatureSetup(
     candidates,
     accepted,
     input.mappings ?? {},
-    existingManifestValidation?.manifest,
+    input.freshDiscovery ? undefined : existingManifestValidation?.manifest,
   );
   const validation = validateFeatureCatalogManifest(manifest);
   const manifestContents = stringifyYaml(manifest, {

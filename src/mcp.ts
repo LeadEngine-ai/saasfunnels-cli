@@ -442,7 +442,7 @@ function featureCatalogMarkdown() {
   return [
     "# SaaSFunnels Feature Catalog Manifest",
     "",
-    "The CLI owns `.saasfunnels/catalog.yaml`. Discovery is local-only and Test-only; source content is never uploaded by the setup command.",
+    "The local features setup command maintains `.saasfunnels/catalog.yaml`; applying generated changes is Test-only. Guided setup submits structured proposals in the connection's environment after explicit approval, without raw source. Coverage tasks and quota semantics require human review in the current Plans & pricing editor.",
     "",
     "Required top-level fields:",
     "- `schemaVersion: 1`",

@@ -1,3 +1,4 @@
+import { discoverCoverageLimitations } from "./discovery-coverage.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -165,7 +166,7 @@ export async function runGuidedSetup(options: Options) {
     );
     // Raw diff/content stays local. Receipts bind to the actual working tree,
     // including uncommitted installation work, rather than HEAD alone.
-    const revision = `${head}:${hash(JSON.stringify([diff, sourceHashes]))}`;
+    const revision = `${head}:${hash(JSON.stringify(["discovery-quality-v2", diff, sourceHashes]))}`;
     const remote = (
       await exec("git", ["remote", "get-url", "origin"], { cwd: options.cwd })
     ).stdout.trim();
@@ -245,11 +246,15 @@ export async function runGuidedSetup(options: Options) {
       });
       return heartbeat;
     };
-    const send = (evidence: unknown) => {
+    const send = (evidence: unknown, proposals?: unknown) => {
       const currentStage = stage;
       if (
-        JSON.stringify({ runId: run!.id, stage: currentStage, evidence })
-          .length > 1_000_000
+        JSON.stringify({
+          runId: run!.id,
+          stage: currentStage,
+          evidence,
+          ...(proposals ? { proposals } : {}),
+        }).length > 1_000_000
       )
         throw new Error(
           "Feature discovery evidence exceeds the upload size limit. Review the source scope before retrying.",
@@ -259,6 +264,7 @@ export async function runGuidedSetup(options: Options) {
           runId: run!.id,
           stage: currentStage,
           evidence,
+          ...(proposals ? { proposals } : {}),
         });
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
@@ -280,6 +286,11 @@ export async function runGuidedSetup(options: Options) {
     timer = setInterval(() => {
       void update(progressState, progressFailure).catch(() => {});
     }, 30_000);
+    const limitations = await discoverCoverageLimitations(options.cwd);
+    if (limitations.length)
+      options.progress?.(
+        "Some app behavior needs manual review. Coverage details will appear with your findings in Setup.",
+      );
     options.progress?.(
       run.receipts.features
         ? "2/4 Features already submitted."
@@ -295,9 +306,14 @@ export async function runGuidedSetup(options: Options) {
         environment: context.environment,
         apply: false,
         manifestOnly: true,
+        freshDiscovery: true,
         accept: ["all"],
       });
-      if (!scan.coverage.complete) {
+      const unsupportedOnly =
+        scan.coverage.scannedFiles === 0 &&
+        !scan.coverage.byteLimitReached &&
+        limitations.some((l) => l.code === "unsupported_language");
+      if (!scan.coverage.complete && !unsupportedOnly) {
         const reason = scan.coverage.byteLimitReached
           ? `${scan.coverage.oversizedFileCount} source file(s) exceed the 2 MB per-file limit. Split large source files before retrying.`
           : !scan.coverage.scannedFiles
@@ -310,6 +326,10 @@ export async function runGuidedSetup(options: Options) {
       options.progress?.(
         `Scanned ${scan.scannedFileCount} files; found ${scan.manifest.features.length} feature proposals.`,
       );
+      if (scan.manifest.features.length > 500)
+        throw new Error(
+          "Feature discovery needs attention: more than 500 features. Narrow the application scope before retrying; nothing was submitted.",
+        );
       if (!scan.ok)
         throw new Error(
           "Feature discovery needs attention. Run features setup to review the local findings.",
@@ -321,6 +341,24 @@ export async function runGuidedSetup(options: Options) {
           repositoryRevision: revision,
           discoveryRoots: scan.framework.roots,
         }),
+        scan.manifest.features.map((feature) => ({
+          featureKey: feature.key,
+          name: feature.name,
+          accessModel: feature.accessModel,
+          reason: feature.evidence.some((e) => e.symbol === "plan_catalog")
+            ? "plan_catalog"
+            : feature.accessModel === "limit"
+              ? "usage_check"
+              : feature.evidence.some(
+                    (e) => e.bindingKind === "server_enforcement",
+                  )
+                ? "access_check"
+                : feature.evidence.some(
+                      (e) => e.bindingKind === "browser_presentation",
+                    )
+                  ? "visibility_gate"
+                  : "denied_access",
+        })),
       );
     }
     stage = "plans";
@@ -434,7 +472,11 @@ export async function runGuidedSetup(options: Options) {
         `Found ${byKey.size} plan proposals in ${reviewedFiles.length} pricing files.`,
       );
       // Transport failures must not be reported as unsupported source syntax.
-      await send({ plans: [...byKey.values()], reviewedFiles });
+      await send({
+        plans: [...byKey.values()],
+        reviewedFiles,
+        ...(limitations.length ? { limitations } : {}),
+      });
     }
 
     stage = "branches";

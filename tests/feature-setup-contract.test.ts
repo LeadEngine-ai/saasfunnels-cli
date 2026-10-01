@@ -580,7 +580,7 @@ describe("saasfunnels features setup", () => {
     await writeFixture(join(cwd, "package.json"), JSON.stringify({}));
     await writeFixture(
       join(cwd, "src/license.ts"),
-      'export const featureKey = "licensed_export";\n',
+      'export function download() { return checkFeature("licensed_export"); }\n',
     );
 
     const result = await runSaaSFunnelsCli(

@@ -1,3 +1,4 @@
+import { isProductNode } from "./source-analysis.js";
 import ts from "typescript";
 import { parseDocument } from "yaml";
 
@@ -32,7 +33,7 @@ const safeProperty = (key: string) =>
   !["__proto__", "constructor", "prototype"].includes(key);
 
 /** Interpret a small static syntax tree, never evaluate customer code or imports. */
-function declarations(source: string): unknown[] {
+function declarations(source: string, featuresOnly = false): unknown[] {
   const file = ts.createSourceFile(
     "pricing.ts",
     source,
@@ -62,7 +63,11 @@ function declarations(source: string): unknown[] {
   for (const statement of file.statements) {
     if (ts.isVariableStatement(statement))
       for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          declaration.initializer &&
+          isProductNode(declaration)
+        ) {
           values.set(declaration.name.text, declaration.initializer);
           if (
             planName.test(declaration.name.text) ||
@@ -126,6 +131,13 @@ function declarations(source: string): unknown[] {
           throw unsupported();
         const key = property.name.getText(file).replace(/^["']|["']$/g, "");
         if (!safeProperty(key)) throw unsupported();
+        if (
+          featuresOnly &&
+          /^(prices|stripePriceId|priceId|stripeProductId|productKey)$/.test(
+            key,
+          )
+        )
+          continue;
         result[key] = next(property.initializer);
       }
       return result;
@@ -191,6 +203,7 @@ export function extractSetupPricing(
   source: string,
   kind: "json" | "yaml" | "typescript",
   catalogPrices: readonly CatalogPrice[] = [],
+  options: { featuresOnly?: boolean } = {},
 ): Plan[] {
   if (source.length > 2_000_000)
     throw new PricingExtractionError(
@@ -199,7 +212,7 @@ export function extractSetupPricing(
     );
   const documents: unknown[] =
     kind === "typescript"
-      ? declarations(source)
+      ? declarations(source, options.featuresOnly)
       : kind === "json"
         ? [JSON.parse(source)]
         : [
@@ -264,9 +277,22 @@ export function extractSetupPricing(
             )
           )
             throw unsupported();
-          if (features[feature] === false && access !== false)
-            throw unsupported();
-          features[feature] = access;
+          const previous = features[feature];
+          if (previous !== undefined && previous !== access) {
+            // A boolean allow can accompany a quota, but a denial, different
+            // quota, or unlimited/finite disagreement needs a human decision.
+            if (
+              previous === false ||
+              access === false ||
+              (previous !== true && access !== true)
+            )
+              throw new PricingExtractionError(
+                "needs_review",
+                "Conflicting access values for the same feature.",
+              );
+          }
+          features[feature] =
+            access === true && previous !== undefined ? previous : access;
         }
       }
       const rawPrices = Array.isArray(row.prices)
@@ -276,7 +302,7 @@ export function extractSetupPricing(
           : (row.stripePriceId ?? row.priceId)
             ? [{ key: row.stripePriceId ?? row.priceId }]
             : [];
-      const prices = rawPrices.map((value) => {
+      const prices = (options.featuresOnly ? [] : rawPrices).map((value) => {
         const price =
           typeof value === "string"
             ? value
@@ -320,6 +346,18 @@ export function extractSetupPricing(
       plans.set(key, plan);
     }
   }
+  const featureModels = new Map<string, Set<string>>();
+  for (const plan of plans.values())
+    for (const [key, value] of Object.entries(plan.features)) {
+      const models = featureModels.get(key) ?? new Set<string>();
+      models.add(typeof value === "boolean" ? "boolean" : "limit");
+      featureModels.set(key, models);
+    }
+  if ([...featureModels.values()].some((models) => models.size > 1))
+    throw new PricingExtractionError(
+      "needs_review",
+      "A feature mixes capability and quota values across plans. Review its access model; no conversion was guessed.",
+    );
   if (!plans.size)
     throw new PricingExtractionError(
       "no_declarations",

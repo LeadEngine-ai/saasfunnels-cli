@@ -10,7 +10,7 @@ it.each([
   ["unsupported", "app.py", 'hasFeature("exports")'],
   ["byte budget", "page.ts", "//" + "a".repeat(2_000_001)],
 ])(
-  "does not submit successful evidence for %s coverage",
+  "does not silently complete unsupported %s coverage",
   async (_kind, file, source) => {
     const cwd = await mkdtemp(join(tmpdir(), "coverage-"));
     try {
@@ -37,7 +37,7 @@ it.each([
         ],
         { cwd },
       );
-      const evidence: unknown[] = [];
+      const evidence: any[] = [];
       const updates: any[] = [];
       const output = await runGuidedSetup({
         cwd,
@@ -68,10 +68,18 @@ it.each([
           return Response.json({ accepted: true });
         },
       });
-      expect(output.exitCode).toBe(2);
-      expect(output.stderr).toContain("Feature discovery needs attention");
-      expect(evidence).toEqual([]);
-      expect(updates.at(-1)).toMatchObject({ state: "failed" });
+      if (_kind === "unsupported") {
+        expect(output.exitCode).toBe(0);
+        expect(
+          evidence.find((e) => e.stage === "plans").evidence.limitations,
+        ).toEqual([{ code: "unsupported_language", files: ["src/app.py"] }]);
+        expect(output.stdout).toContain("review findings");
+      } else {
+        expect(output.exitCode).toBe(2);
+        expect(output.stderr).toContain("Feature discovery needs attention");
+        expect(evidence).toEqual([]);
+        expect(updates.at(-1)).toMatchObject({ state: "failed" });
+      }
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -163,6 +171,32 @@ it("does not scan test, generated, overlapping or symlinked source twice", async
     expect(result.manifest.features.map((f) => f.key)).toEqual([
       "real_feature",
     ]);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+it("fresh guided discovery ignores an invalid old manifest without modifying it", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "fresh-discovery-"));
+  try {
+    await mkdir(join(cwd, "src"));
+    await mkdir(join(cwd, ".saasfunnels"));
+    await writeFile(join(cwd, "src/access.ts"), 'checkFeature("exports");');
+    await writeFile(join(cwd, ".saasfunnels/catalog.yaml"), "invalid: [");
+    const options = {
+      cwd,
+      apiBaseUrl: "https://app.example",
+      environment: "production" as const,
+      apply: false,
+      manifestOnly: true,
+      accept: ["all"],
+    };
+    const result = await runFeatureSetup({ ...options, freshDiscovery: true });
+    expect(result.manifest.features.map((f) => f.key)).toEqual(["exports"]);
+    expect(await readFile(join(cwd, ".saasfunnels/catalog.yaml"), "utf8")).toBe(
+      "invalid: [",
+    );
+    await expect(runFeatureSetup(options)).rejects.toThrow();
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
