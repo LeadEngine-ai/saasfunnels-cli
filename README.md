@@ -108,4 +108,6 @@ Static pricing supports literal spreads, capability/quota maps, unlimited limits
 
 If extraction is unsupported, `.saasfunnels/setup-review.json` lists the files and reasons. Correct those declarations or review a `.saasfunnels/setup-pricing.json` file with `{ "plans": [{ "key": "pro", "name": "Pro", "features": { "export": true }, "prices": [{ "key": "price_ACTUAL_ID" }] }] }`, then resume. Use real identifiers from the connected merchant. Raw source files are never uploaded by guided setup or the pricing handoff.
 
+Discovery follows Git ignore rules (including custom build folders) while keeping tracked application sources and new, non-ignored source files. Standalone folders without Git use the standard source filters.
+
 The command does not implement arbitrary payment code, approve feature access, or verify transactions. Complete **Review and verify** in Setup after deploying the runtime and payment integration. Requires the server's guided setup API release.
