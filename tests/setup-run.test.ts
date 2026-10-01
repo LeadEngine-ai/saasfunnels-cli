@@ -57,7 +57,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
-it("runs a genuine empty repository scan, uploads normalized stages, and resumes without duplicates", async () => {
+it.each(["test", "production"] as const)("runs a genuine empty %s scan, uploads normalized stages, and resumes without duplicates", async (environment) => {
   const cwd = await mkdtemp(join(tmpdir(), "guided-fixture-"));
   try {
     execFileSync("git", ["init", "--quiet"], { cwd });
@@ -105,7 +105,7 @@ it("runs a genuine empty repository scan, uploads normalized stages, and resumes
           generation: "a".repeat(64),
           installationId: "installation",
           integrationId: "stripe",
-          environment: "test",
+          environment,
           catalogReady: true,
           planNames: [],
         });

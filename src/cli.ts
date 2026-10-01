@@ -1,3 +1,4 @@
+import { resolveSetupAccess } from "./setup-access.js";
 import { dirname, join, resolve } from "node:path";
 import { extractSetupPricing } from "./setup-pricing.js";
 import { runGuidedSetup, submitApprovedSetupPlans } from "./setup-run.js";
@@ -56,6 +57,7 @@ export type SaaSFunnelsCliOptions = {
   fetch?: typeof fetch;
   fs?: CliFileSystem;
   prompt?: (message: string) => Promise<string>;
+  progress?: (message: string) => void;
 };
 
 export type SaaSFunnelsCliResult = {
@@ -183,7 +185,8 @@ function usage() {
   return `${SAASFUNNELS_PRODUCT_NAME} CLI
 
 Usage:
-  ${SAASFUNNELS_CLI_NAME} setup run [--resume] [--send]
+  ${SAASFUNNELS_CLI_NAME} setup [--resume] [--env-file <path>]
+  ${SAASFUNNELS_CLI_NAME} setup run [--resume] [--send] [--non-interactive]
   ${SAASFUNNELS_CLI_NAME} init [--api-base-url <url>] [--force]
   ${SAASFUNNELS_CLI_NAME} agent install --target codex|claude-code|cursor|markdown [--endpoint <url>]
   ${SAASFUNNELS_CLI_NAME} events validate <file> [--source direct|posthog|segment] [--json]
@@ -1342,7 +1345,15 @@ export async function runSaaSFunnelsCli(
     if (!command || command === "help" || command === "--help")
       return result(0, usage());
     if (command === "init") return await commandInit(parsed.flags, options);
-    if (command === "setup" && args[0] === "run") return runGuidedSetup({ cwd: cwd(options), apiBaseUrl: apiBaseUrl(options, parsed.flags), key: envValue(options, SAASFUNNELS_ENV.apiKey), send: hasFlag(parsed.flags, "send"), resume: hasFlag(parsed.flags, "resume"), fetch: options.fetch, prompt: jsonMode(parsed.flags) ? undefined : options.prompt });
+    if (command === "setup") {
+      const help = "SaaSFunnels setup\n\nRun npx --yes saasfunnels@latest setup in your app repository.\nIt checks access, asks before sending findings, and discovers features and plans for review.\nUse --resume after an interruption, or --env-file .env.local to load developer access.\nFor automation, supply SAASFUNNELS_API_KEY and explicit upload approval with --send --non-interactive.\nApp implementation, deployment and payment verification remain in https://app.saasfunnels.ai/app/setup.\n";
+      if (hasFlag(parsed.flags, "help") || args[0] === "help") return result(0, help);
+      if (args.length > 1 || (args[0] && args[0] !== "run")) return result(2, "", help);
+      const interactive = !jsonMode(parsed.flags) && !hasFlag(parsed.flags, "non-interactive");
+      const access = await resolveSetupAccess({ cwd: cwd(options), key: envValue(options, SAASFUNNELS_ENV.apiKey), envFile: flagString(parsed.flags, "env-file"), prompt: interactive ? options.prompt : undefined });
+      if (!access.key) return result(2, "", access.error + "\n");
+      return runGuidedSetup({ cwd: cwd(options), apiBaseUrl: apiBaseUrl(options, parsed.flags), key: access.key, send: hasFlag(parsed.flags, "send"), resume: hasFlag(parsed.flags, "resume"), fetch: options.fetch, prompt: interactive ? options.prompt : undefined, progress: jsonMode(parsed.flags) ? undefined : options.progress });
+    }
     if (command === "agent")
       return await commandAgentInstall(args, parsed.flags, options);
     if (command === "events")

@@ -48,6 +48,16 @@ try {
   if (!help.includes("SaaSFunnels CLI") || help.includes("PREVENUE_")) {
     throw new Error("Installed help output did not expose only the SaaSFunnels identity");
   }
+  const setupHelp = runExecutable(executable, ["setup", "--help"]);
+  if (!setupHelp.includes("saasfunnels@latest setup") || setupHelp.includes("mcp serve")) {
+    throw new Error("Installed setup entry point did not provide focused setup guidance");
+  }
+  const missingAccess = spawnSync(executable, ["setup", "--non-interactive"], {
+    encoding: "utf8", env: { PATH: process.env.PATH }, timeout: 5000,
+  });
+  if (missingAccess.status !== 2 || !missingAccess.stderr.includes("Environment values")) {
+    throw new Error("Installed setup did not stop safely with a concrete access recovery step");
+  }
   const verification = JSON.parse(runExecutable(executable, ["verify", "--json"]));
   if (!verification.ok) {
     throw new Error("Installed saasfunnels verify command did not pass");
@@ -61,7 +71,7 @@ try {
       [
         'import { hostedSaaSFunnelsMcpToolDefinitions, SAASFUNNELS_CLI_VERSION } from "saasfunnels/library";',
         "const tools = hostedSaaSFunnelsMcpToolDefinitions();",
-        'if (SAASFUNNELS_CLI_VERSION !== "0.3.0") throw new Error("Unexpected library version");',
+        'if (SAASFUNNELS_CLI_VERSION !== "0.3.1") throw new Error("Unexpected library version");',
         'if (!tools.length || tools.some((tool) => tool.annotations?.readOnlyHint === false)) throw new Error("Unsafe hosted library registry");',
         'process.stdout.write(JSON.stringify({ library: "passed", tools: tools.length }));',
       ].join(" "),
