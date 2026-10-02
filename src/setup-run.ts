@@ -91,6 +91,10 @@ export async function runGuidedSetup(options: Options) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(30_000),
     });
+    if (response.status === 426)
+      throw new Error(
+        "Setup request failed: update the installer with npx --yes saasfunnels@latest setup run",
+      );
     if (!response.ok)
       throw new Error(
         `Setup request failed (${response.status}). Check installation access and retry.`,
@@ -190,7 +194,7 @@ export async function runGuidedSetup(options: Options) {
         }
       }),
     );
-    const revision = `${head}:${hash(JSON.stringify(["configuration-v3", diff, sourceHashes, reviewedInputs]))}`;
+    const revision = `${head}:${hash(JSON.stringify(["configuration-v3", SAASFUNNELS_CLI_VERSION, diff, sourceHashes, reviewedInputs]))}`;
     const remote = (
       await exec("git", ["remote", "get-url", "origin"], { cwd: options.cwd })
     ).stdout.trim();
@@ -199,12 +203,13 @@ export async function runGuidedSetup(options: Options) {
     if (options.resume) {
       const saved = JSON.parse(await readFile(statePath, "utf8"));
       if (
+        saved.cliVersion !== SAASFUNNELS_CLI_VERSION ||
         saved.generation !== context.generation ||
         saved.repositoryKey !== repositoryKey ||
         saved.revision !== revision
       )
         throw new Error(
-          "The app connection or revision changed. Run setup again without --resume.",
+          "The app connection, installer, or source changed. Start a fresh scan: npx --yes saasfunnels@latest setup run",
         );
     }
     const approved =
@@ -237,6 +242,7 @@ export async function runGuidedSetup(options: Options) {
       statePath,
       JSON.stringify(
         {
+          cliVersion: SAASFUNNELS_CLI_VERSION,
           generation: context.generation,
           repositoryKey,
           revision,

@@ -45,6 +45,58 @@ function declarations(source: string, featuresOnly = false): unknown[] {
     true,
     ts.ScriptKind.TSX,
   );
+  // A schema describes input structure, not a customer's plan configuration.
+  // Resolve actual validator imports rather than excluding files or names such
+  // as "schema", which may also contain genuine commercial declarations.
+  const validatorBindings = new Map<string, string>();
+  for (const statement of file.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !/^(?:zod(?:\/.*)?|yup|joi|valibot|superstruct)$/.test(
+        statement.moduleSpecifier.text,
+      )
+    )
+      continue;
+    const clause = statement.importClause;
+    if (clause?.name) validatorBindings.set(clause.name.text, "namespace");
+    const bindings = clause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings))
+      validatorBindings.set(bindings.name.text, "namespace");
+    if (bindings && ts.isNamedImports(bindings))
+      for (const item of bindings.elements)
+        validatorBindings.set(
+          item.name.text,
+          item.propertyName?.text ?? item.name.text,
+        );
+  }
+  const schemaConstructors =
+    /^(?:object|strictObject|looseObject|record|array|tuple|union|intersection|discriminatedUnion|lazy|recursive|struct)$/;
+  const schemaModifiers =
+    /^(?:strict|passthrough|strip|optional|nullable|nullish|default|describe|meta|refine|superRefine|transform|pipe|readonly|brand|extend|merge|pick|omit|partial|required|min|max)$/;
+  function validationSchema(node: ts.Expression): boolean {
+    if (
+      ts.isAsExpression(node) ||
+      ts.isSatisfiesExpression(node) ||
+      ts.isParenthesizedExpression(node)
+    )
+      return validationSchema(node.expression);
+    if (!ts.isCallExpression(node)) return false;
+    const callee = node.expression;
+    if (ts.isIdentifier(callee))
+      return schemaConstructors.test(validatorBindings.get(callee.text) ?? "");
+    if (!ts.isPropertyAccessExpression(callee)) return false;
+    if (
+      ts.isIdentifier(callee.expression) &&
+      validatorBindings.has(callee.expression.text) &&
+      schemaConstructors.test(callee.name.text)
+    )
+      return true;
+    return (
+      schemaModifiers.test(callee.name.text) &&
+      validationSchema(callee.expression)
+    );
+  }
   const values = new Map<string, ts.Expression>();
   const roots: ts.Expression[] = [];
   const planName =
@@ -73,6 +125,7 @@ function declarations(source: string, featuresOnly = false): unknown[] {
           isProductNode(declaration)
         ) {
           values.set(declaration.name.text, declaration.initializer);
+          if (validationSchema(declaration.initializer)) continue;
           if (
             planName.test(declaration.name.text) ||
             (containsAccess(declaration.initializer) &&
@@ -86,7 +139,8 @@ function declarations(source: string, featuresOnly = false): unknown[] {
       }
     if (
       ts.isExportAssignment(statement) &&
-      containsAccess(statement.expression)
+      containsAccess(statement.expression) &&
+      !validationSchema(statement.expression)
     )
       roots.push(statement.expression);
   }

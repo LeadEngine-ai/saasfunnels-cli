@@ -156,6 +156,16 @@ it.each(["test", "production"] as const)(
         (await runGuidedSetup({ ...options, resume: true })).exitCode,
       ).toBe(0);
       expect(uploads).toHaveLength(3);
+      const stateFile = join(cwd, ".saasfunnels/setup-run.json");
+      const saved = JSON.parse(await readFile(stateFile, "utf8"));
+      saved.cliVersion = "0.3.0";
+      await writeFile(stateFile, JSON.stringify(saved));
+      const oldScanner = await runGuidedSetup({ ...options, resume: true });
+      expect(oldScanner.exitCode).toBe(2);
+      expect(oldScanner.stderr).toContain(
+        "npx --yes saasfunnels@latest setup run",
+      );
+      expect(uploads).toHaveLength(3);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
