@@ -55,7 +55,9 @@ it.each([
               installationId: "installation",
               integrationId: "stripe",
               environment: "production",
-              contractVersion: 3, minimumCliVersion: "0.4.0", catalogReady: true,
+              contractVersion: 3,
+              minimumCliVersion: "0.4.0",
+              catalogReady: true,
               planNames: [],
             });
           if (path.endsWith("/runs")) {
@@ -72,7 +74,13 @@ it.each([
         expect(output.exitCode).toBe(0);
         expect(
           evidence.find((e) => e.stage === "plans").evidence.limitations,
-        ).toEqual([{ code: "unsupported_language", files: ["src/app.py"] }]);
+        ).toEqual([
+          expect.objectContaining({
+            code: "unsupported_language",
+            files: ["src/app.py"],
+            sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+          }),
+        ]);
         expect(output.stdout).toContain("review findings");
       } else {
         expect(output.exitCode).toBe(2);

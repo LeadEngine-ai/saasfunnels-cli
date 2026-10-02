@@ -33,14 +33,50 @@ it("reports unsupported backends, dynamic access and optional pricing without se
     const limitations = await discoverCoverageLimitations(cwd);
     expect(limitations).toEqual(
       expect.arrayContaining([
-        { code: "unsupported_language", files: ["src/backend.py"] },
-        { code: "dynamic_access", files: ["src/access.ts"] },
-        { code: "commercial_extensions", files: ["src/pricing.ts"] },
+        expect.objectContaining({
+          code: "unsupported_language",
+          files: ["src/backend.py"],
+        }),
+        expect.objectContaining({
+          code: "dynamic_access",
+          files: ["src/access.ts"],
+        }),
+        expect.objectContaining({
+          code: "commercial_extensions",
+          files: ["src/pricing.ts"],
+        }),
       ]),
     );
     expect(JSON.stringify(limitations)).not.toMatch(
       /PRIVATE_SOURCE|vendor|fixture|ignored|utility/,
     );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+it("reopens only coverage questions whose supporting files changed, including paths beyond the display cap", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "coverage-revision-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd });
+    for (let i = 0; i < 13; i++)
+      await writeFile(
+        join(cwd, `access${String(i).padStart(2, "0")}.ts`),
+        "checkFeature(dynamicKey);",
+      );
+    const [before] = await discoverCoverageLimitations(cwd);
+    expect(before!.files).toHaveLength(12);
+    await writeFile(join(cwd, "unrelated.ts"), "export const theme='dark';");
+    expect((await discoverCoverageLimitations(cwd))[0]!.sourceFingerprint).toBe(
+      before!.sourceFingerprint,
+    );
+    await writeFile(
+      join(cwd, "access12.ts"),
+      "checkFeature(changedDynamicKey);",
+    );
+    expect(
+      (await discoverCoverageLimitations(cwd))[0]!.sourceFingerprint,
+    ).not.toBe(before!.sourceFingerprint);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
