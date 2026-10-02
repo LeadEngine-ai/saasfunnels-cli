@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { planRestrictionEvidence } from "./plan-analysis.js";
 import { planConstantResolver } from "./plan-constants.js";
 import { execFile } from "node:child_process";
@@ -16,6 +17,7 @@ import {
 export type DiscoveryLimitation = {
   code: "unsupported_language" | "commercial_extensions" | "dynamic_access";
   files: string[];
+  sourceFingerprint: string;
 };
 const exec = promisify(execFile);
 
@@ -36,9 +38,10 @@ export async function discoverCoverageLimitations(
     );
   const sources = new Map<string, string>();
   const results = new Map<DiscoveryLimitation["code"], Set<string>>();
+  const evidence = new Map<string, string>();
   const record = (code: DiscoveryLimitation["code"], file: string) => {
     const paths = results.get(code) ?? new Set<string>();
-    if (paths.size < 12) paths.add(file);
+    paths.add(file);
     results.set(code, paths);
   };
   for (const path of files) {
@@ -64,6 +67,16 @@ export async function discoverCoverageLimitations(
         path,
       )
     ) {
+      if (stat.size > 2_000_000)
+        throw new Error(
+          "Unsupported source exceeds the 2 MB scan limit. Narrow the discovery scope before retrying.",
+        );
+      evidence.set(
+        path,
+        createHash("sha256")
+          .update(await readFile(join(cwd, path)))
+          .digest("hex"),
+      );
       record("unsupported_language", path);
       continue;
     }
@@ -75,6 +88,7 @@ export async function discoverCoverageLimitations(
       continue;
     const source = await readFile(join(cwd, path), "utf8");
     sources.set(path, source);
+    evidence.set(path, createHash("sha256").update(source).digest("hex"));
     const file = parseApplicationSource(path, source);
     const visit = (node: ts.Node) => {
       if (!isProductNode(node)) return;
@@ -147,5 +161,16 @@ export async function discoverCoverageLimitations(
     )
       record("dynamic_access", path);
   }
-  return [...results].map(([code, paths]) => ({ code, files: [...paths] }));
+  return [...results].map(([code, paths]) => ({
+    code,
+    files: [...paths].sort().slice(0, 12),
+    // Include all affected files in the receipt, even when the UI path list is capped.
+    sourceFingerprint: createHash("sha256")
+      .update(
+        JSON.stringify(
+          [...paths].sort().map((path) => [path, evidence.get(path)]),
+        ),
+      )
+      .digest("hex"),
+  }));
 }

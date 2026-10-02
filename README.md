@@ -51,7 +51,7 @@ approved set is reviewable.
 - uses: LeadEngine-ai/saasfunnels-cli/action@v0.2.1
   with:
     api-key: ${{ secrets.SAASFUNNELS_API_KEY }}
-    cli-version: 0.2.1          # pin it; a floating version rebaselines drift
+    cli-version: 0.2.1 # pin it; a floating version rebaselines drift
     discovery-roots: app,lib
 ```
 
@@ -63,8 +63,8 @@ measured against a comparable scan rather than a wider or narrower one.
 Plan and pricing upload is opt-in:
 
 ```yaml
-    plan-sources: "true"
-    integration-id: <stripe integration id>
+plan-sources: "true"
+integration-id: <stripe integration id>
 ```
 
 It runs only on the default branch, requires a committed
@@ -100,7 +100,7 @@ Support: support@saasfunnels.ai
 
 Use `saasfunnels setup run` from the application repository after creating app credentials in Setup. Load `SAASFUNNELS_API_KEY` from **Developer setup access** into the local process environment. Its scopes are `developer:read` and `features:write`; it is not a browser or payment-administration key.
 
-The command asks before uploading structured discovery proposals. `--send` provides explicit non-interactive approval. It coordinates features, pricing extraction, and plan branches, reports progress, and waits for the Stripe catalog. Run `saasfunnels setup run --resume` after an interruption. Existing accepted stages and customer review decisions are preserved.
+The command asks before uploading structured discovery proposals. `--send` provides explicit non-interactive approval. It coordinates features, pricing extraction, and plan branches, reports progress, and waits for the Stripe catalog. Run `saasfunnels setup run --resume` after an interruption. Existing accepted stages and customer review decisions are preserved. Coverage questions include a SHA-256 fingerprint of their affected files so changed application behavior can reopen an answer while unrelated file changes keep it. Only the fingerprint and bounded paths are uploaded, never source contents.
 
 The scanner reads supported application files one at a time without the old 500-file, 2 MB repository, or 200-candidate cutoffs. Generated code, tests, and symlinks are excluded. Files over 2 MB and uploads over the server limit stop with a specific recovery message.
 
