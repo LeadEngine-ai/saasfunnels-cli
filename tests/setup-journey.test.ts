@@ -62,6 +62,8 @@ function server(failPlans = false) {
         installationId: "installation",
         integrationId: "stripe",
         environment: "production",
+        contractVersion: 3,
+        minimumCliVersion: "0.4.0",
         catalogReady: true,
         planNames: [],
         catalogPrices: [{ id: "price_pro", lookupKey: "pro_month" }],
@@ -111,6 +113,7 @@ it("finds pricing beyond ten filename matches and completes all stages with lite
       "branches",
     ]);
     expect(mock.uploads[1].evidence).toEqual({
+      coverage: { status: "complete", scannedFiles: 16 },
       plans: [
         {
           key: "pro",
@@ -180,6 +183,9 @@ it("writes exact recovery tasks and resumes after a reviewed pricing declaration
       }),
     );
     expect(await runGuidedSetup({ ...options, resume: true })).toMatchObject({
+      exitCode: 2,
+    });
+    expect(await runGuidedSetup({ ...options, resume: false })).toMatchObject({
       exitCode: 0,
     });
     expect(mock.uploads.filter((u) => u.stage === "features")).toHaveLength(1);

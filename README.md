@@ -119,3 +119,30 @@ Guided setup proposes supported JavaScript/TypeScript gates and static JS/TS/JSO
 A frontend scan is not evidence of complete backend coverage. Setup flags unsupported application languages, unresolved dynamic access, and optional add-on/capacity/trial declarations. Review these against the actual application's entitlement owner before confirming. Imported or dynamic pricing that cannot be statically resolved needs reviewed literal `.saasfunnels/setup-pricing.json` evidence or manual configuration; source is never executed. Arbitrary helper names and external services cannot be exhaustively discovered automatically.
 
 Feature configuration must be saved and published in Plans & pricing before Setup can confirm it. Naming an unnamed restriction records a review decision; it does not implement access. A new scanner version may require running without `--resume`; guided rescans preserve human decisions and leave local generated catalogs untouched.
+
+### Review prefilled configuration (Setup contract 3)
+
+CLI 0.4.x coordinates with the guided configuration review. Run
+`npx --yes saasfunnels@latest setup run` to submit proposals; workspace
+administrators review and publish them in Setup. The developer key never approves
+configuration or payment connections.
+
+Supported literal pricing declarations may include `quotas` with explicit unit,
+period, aggregation, and `usageSource: "customer_reported"`, plus `components`
+with exact Stripe product/price IDs, included quantities and quantity sources.
+Use `quantityBasis: "total"` for sources reporting all units, or `"additional"`
+for sources already reporting units above the allowance. Missing semantics require
+review rather than guessed defaults.
+
+A coding agent can place reviewed declarations in `.saasfunnels/setup-pricing.json`
+and question explanations in `.saasfunnels/setup-answers.json`. Explanations are
+bounded `{id, fingerprint, disposition, reason}` records; disposition is
+`configuration`, `not_applicable`, or `unresolved`. Configuration answers include
+`configuration: [{planKey, featureKey}]` or `[{planKey, componentKey}]` referencing
+corrected declarations. Required unsupported behavior must remain unresolved.
+Corrected configuration belongs in the pricing
+file. No source files or credentials belong in either upload.
+
+Changes to those files or application source require a fresh run. Use `--resume`
+only for unchanged interrupted work. The scan identity includes reviewed inputs
+and scanner contract version, so accepted old submissions cannot hide corrections.
