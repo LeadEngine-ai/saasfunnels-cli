@@ -1,3 +1,5 @@
+import { SAASFUNNELS_CLI_VERSION } from "./identity.js";
+import { developerAnswersSchema } from "./setup-commercial.js";
 import { discoverCoverageLimitations } from "./discovery-coverage.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -19,6 +21,8 @@ import {
 const exec = promisify(execFile);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const contextSchema = z.object({
+  contractVersion: z.literal(3),
+  minimumCliVersion: z.string(),
   workspaceId: z.string(),
   generation: z.string().regex(/^[a-f0-9]{64}$/),
   installationId: z.string().nullable(),
@@ -82,6 +86,7 @@ export async function runGuidedSetup(options: Options) {
       headers: {
         authorization: `Bearer ${options.key}`,
         "content-type": "application/json",
+        "x-saasfunnels-cli-version": SAASFUNNELS_CLI_VERSION,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(30_000),
@@ -108,9 +113,12 @@ export async function runGuidedSetup(options: Options) {
   let progressFailure: string | null = null;
   try {
     options.progress?.("1/4 Checking app connection…");
-    let context = contextSchema.parse(
-      await request("/api/developer-tools/setup/context"),
-    );
+    const initialContext = await request("/api/developer-tools/setup/context");
+    if (initialContext.contractVersion !== 3)
+      throw new Error(
+        "This app does not support this installer yet. Finish deploying the matching Setup release before retrying.",
+      );
+    let context = contextSchema.parse(initialContext);
     if (!context.installationId || !context.integrationId)
       throw new Error(
         "Connect Stripe and create app credentials in Setup first.",
@@ -166,7 +174,23 @@ export async function runGuidedSetup(options: Options) {
     );
     // Raw diff/content stays local. Receipts bind to the actual working tree,
     // including uncommitted installation work, rather than HEAD alone.
-    const revision = `${head}:${hash(JSON.stringify(["discovery-quality-v2", diff, sourceHashes]))}`;
+    const reviewedInputs = await Promise.all(
+      ["setup-pricing.json", "setup-answers.json"].map(async (name) => {
+        try {
+          return [
+            name,
+            hash(
+              await readFile(join(options.cwd, ".saasfunnels", name), "utf8"),
+            ),
+          ];
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT")
+            return [name, null];
+          throw error;
+        }
+      }),
+    );
+    const revision = `${head}:${hash(JSON.stringify(["configuration-v3", diff, sourceHashes, reviewedInputs]))}`;
     const remote = (
       await exec("git", ["remote", "get-url", "origin"], { cwd: options.cwd })
     ).stdout.trim();
@@ -246,7 +270,11 @@ export async function runGuidedSetup(options: Options) {
       });
       return heartbeat;
     };
-    const send = (evidence: unknown, proposals?: unknown) => {
+    const send = (
+      evidence: unknown,
+      proposals?: unknown,
+      coverage?: unknown,
+    ) => {
       const currentStage = stage;
       if (
         JSON.stringify({
@@ -254,6 +282,7 @@ export async function runGuidedSetup(options: Options) {
           stage: currentStage,
           evidence,
           ...(proposals ? { proposals } : {}),
+          ...(coverage ? { coverage } : {}),
         }).length > 1_000_000
       )
         throw new Error(
@@ -265,6 +294,7 @@ export async function runGuidedSetup(options: Options) {
           stage: currentStage,
           evidence,
           ...(proposals ? { proposals } : {}),
+          ...(coverage ? { coverage } : {}),
         });
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
@@ -359,6 +389,10 @@ export async function runGuidedSetup(options: Options) {
                   ? "visibility_gate"
                   : "denied_access",
         })),
+        {
+          status: unsupportedOnly ? "unsupported" : "complete",
+          scannedFiles: scan.coverage.scannedFiles,
+        },
       );
     }
     stage = "plans";
@@ -381,7 +415,7 @@ export async function runGuidedSetup(options: Options) {
       return {
         exitCode: 2,
         stdout:
-          "Stripe is still importing. Run npx --yes saasfunnels@latest setup --resume when the catalog is ready.\n",
+          "Stripe is still importing. Run npx --yes saasfunnels@latest setup run --resume when the catalog is ready.\n",
         stderr: "",
       };
     options.progress?.(
@@ -464,15 +498,29 @@ export async function runGuidedSetup(options: Options) {
         await update("waiting", "extraction_unsupported");
         return {
           exitCode: 2,
-          stdout: `Pricing needs review in ${issues.length} file(s). See .saasfunnels/setup-review.json for the exact files and reasons. Ask your coding agent to review those declarations, or prepare .saasfunnels/setup-pricing.json, then run npx --yes saasfunnels@latest setup --resume. No pricing evidence was submitted.\n`,
+          stdout: `Pricing needs review in ${issues.length} file(s). See .saasfunnels/setup-review.json for the exact files and reasons. Ask your coding agent to review those declarations, or prepare .saasfunnels/setup-pricing.json, then run npx --yes saasfunnels@latest setup run for a fresh scan. No pricing evidence was submitted.\n`,
           stderr: "",
         };
       }
       options.progress?.(
         `Found ${byKey.size} plan proposals in ${reviewedFiles.length} pricing files.`,
       );
+      let developerAnswers: unknown = undefined;
+      try {
+        const raw = await readFile(
+          join(options.cwd, ".saasfunnels/setup-answers.json"),
+          "utf8",
+        );
+        if (raw.length > 100_000)
+          throw new Error("Developer answers exceed the upload limit.");
+        developerAnswers = developerAnswersSchema.parse(JSON.parse(raw));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
       // Transport failures must not be reported as unsupported source syntax.
       await send({
+        coverage: { status: "complete", scannedFiles: sources.length },
+        ...(developerAnswers ? { developerAnswers } : {}),
         plans: [...byKey.values()],
         reviewedFiles,
         ...(limitations.length ? { limitations } : {}),
@@ -568,6 +616,7 @@ export async function submitApprovedSetupPlans(input: {
       headers: {
         authorization: `Bearer ${input.key}`,
         "content-type": "application/json",
+        "x-saasfunnels-cli-version": SAASFUNNELS_CLI_VERSION,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(30_000),

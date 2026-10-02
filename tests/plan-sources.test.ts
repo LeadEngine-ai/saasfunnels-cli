@@ -202,7 +202,7 @@ describe("plans CLI", () => {
     const fetchImpl = (async (url: string, init: RequestInit) => {
       expect(new Headers(init.headers).get("authorization")).toBeTruthy();
       const path = new URL(String(url)).pathname;
-      if (path.endsWith("/context")) return Response.json({ workspaceId: "workspace", generation: "a".repeat(64), installationId: "installation", integrationId: "11111111-1111-4111-8111-111111111111", environment: "test", catalogReady: true, planNames: ["free", "pro"] });
+      if (path.endsWith("/context")) return Response.json({ workspaceId: "workspace", generation: "a".repeat(64), installationId: "installation", integrationId: "11111111-1111-4111-8111-111111111111", environment: "test", contractVersion: 3, minimumCliVersion: "0.4.0", catalogReady: true, planNames: ["free", "pro"] });
       if (path.endsWith("/runs")) return Response.json({ run: { id: "11111111-1111-4111-8111-111111111111" } });
       expect(path).toBe("/api/developer-tools/setup/evidence");
       body = JSON.parse(init.body as string);

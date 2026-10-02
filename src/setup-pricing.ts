@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { quotaSchema, componentSchema } from "./setup-commercial.js";
 import { isProductNode } from "./source-analysis.js";
 import ts from "typescript";
 import { parseDocument } from "yaml";
@@ -9,6 +11,8 @@ type Plan = {
   features: Record<string, boolean | number | "unlimited">;
   prices: { key: string }[];
   productKey?: string;
+  quotas?: Record<string, z.infer<typeof quotaSchema>>;
+  components?: Array<z.infer<typeof componentSchema>>;
 };
 export class PricingExtractionError extends Error {
   constructor(
@@ -254,6 +258,7 @@ export function extractSetupPricing(
       )
         continue;
       const features: Plan["features"] = Object.create(null);
+      const quotas: NonNullable<Plan["quotas"]> = {};
       for (const field of ["features", "capabilities", "quotas"]) {
         const raw = row[field];
         const entries = object(raw)
@@ -264,7 +269,16 @@ export function extractSetupPricing(
               ? []
               : null;
         if (!entries) throw unsupported();
-        for (const [feature, access] of entries) {
+        for (const [feature, rawAccess] of entries) {
+          const structured = object(rawAccess);
+          let access = rawAccess;
+          if (field === "quotas" && structured) {
+            const { limit, ...measurement } = structured;
+            const parsed = quotaSchema.safeParse(measurement);
+            if (!parsed.success) throw unsupported();
+            quotas[feature] = parsed.data;
+            access = limit ?? features[feature];
+          }
           if (
             !safeKey(feature) ||
             !safeProperty(feature) ||
@@ -334,6 +348,15 @@ export function extractSetupPricing(
         features,
         prices,
         ...(typeof productKey === "string" ? { productKey } : {}),
+        ...(Object.keys(quotas).length ? { quotas } : {}),
+        ...(row.components !== undefined && !options.featuresOnly
+          ? {
+              components: z
+                .array(componentSchema)
+                .max(200)
+                .parse(row.components),
+            }
+          : {}),
       };
       if (
         plans.has(key) &&

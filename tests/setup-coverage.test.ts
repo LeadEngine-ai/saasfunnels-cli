@@ -55,7 +55,7 @@ it.each([
               installationId: "installation",
               integrationId: "stripe",
               environment: "production",
-              catalogReady: true,
+              contractVersion: 3, minimumCliVersion: "0.4.0", catalogReady: true,
               planNames: [],
             });
           if (path.endsWith("/runs")) {
