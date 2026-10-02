@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { packOnce, run } from "./pack-utils.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const manifest = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8"));
 const workspace = await mkdtemp(join(tmpdir(), "saasfunnels-install-"));
 
 function runExecutable(executable, args) {
@@ -71,7 +72,7 @@ try {
       [
         'import { hostedSaaSFunnelsMcpToolDefinitions, SAASFUNNELS_CLI_VERSION } from "saasfunnels/library";',
         "const tools = hostedSaaSFunnelsMcpToolDefinitions();",
-        'if (SAASFUNNELS_CLI_VERSION !== "0.4.1") throw new Error("Unexpected library version");',
+        `if (SAASFUNNELS_CLI_VERSION !== ${JSON.stringify(manifest.version)}) throw new Error("Unexpected library version");`,
         'if (!tools.length || tools.some((tool) => tool.annotations?.readOnlyHint === false)) throw new Error("Unsafe hosted library registry");',
         'process.stdout.write(JSON.stringify({ library: "passed", tools: tools.length }));',
       ].join(" "),
