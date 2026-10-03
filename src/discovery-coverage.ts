@@ -25,6 +25,7 @@ const exec = promisify(execFile);
  * Only bounded repository-relative paths leave the machine, after approval. */
 export async function discoverCoverageLimitations(
   cwd: string,
+  onSource?: (file: ts.SourceFile) => void,
 ): Promise<DiscoveryLimitation[]> {
   const { stdout } = await exec(
     "git",
@@ -90,6 +91,7 @@ export async function discoverCoverageLimitations(
     sources.set(path, source);
     evidence.set(path, createHash("sha256").update(source).digest("hex"));
     const file = parseApplicationSource(path, source);
+    onSource?.(file);
     const visit = (node: ts.Node) => {
       if (!isProductNode(node)) return;
       if (
