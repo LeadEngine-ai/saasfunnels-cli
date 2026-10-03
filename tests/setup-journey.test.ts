@@ -114,6 +114,7 @@ it("finds pricing beyond ten filename matches and completes all stages with lite
     ]);
     expect(mock.uploads[1].evidence).toEqual({
       coverage: { status: "complete", scannedFiles: 16 },
+      lifecycle: [],
       plans: [
         {
           key: "pro",
@@ -189,4 +190,59 @@ it("writes exact recovery tasks and resumes after a reviewed pricing declaration
       exitCode: 0,
     });
     expect(mock.uploads.filter((u) => u.stage === "features")).toHaveLength(1);
+  }));
+
+it("includes reviewed lifecycle findings in the plans stage and invalidates resume when they change", async () =>
+  fixture(async (cwd) => {
+    await mkdir(join(cwd, ".saasfunnels"), { recursive: true });
+    const file = join(cwd, ".saasfunnels/setup-lifecycle.json");
+    const findings = [{
+      family: "trial_conversion", subjectKey: null, state: "supported",
+      provenance: [{ file: "lib/app.ts", line: 1 }], reason: "Reviewed trial behavior", entry: null, action: null,
+      terms: { durationDays: 14, endBehavior: "paid_conversion", paymentRequirement: "required", paidPlanKey: "pro" },
+    }];
+    await writeFile(file, JSON.stringify(findings));
+    const mock = server();
+    const options = { cwd, key: "fixture", apiBaseUrl: "https://app.example", send: true, resume: false, fetch: mock.fetcher };
+    expect((await runGuidedSetup(options)).exitCode).toBe(0);
+    expect(mock.uploads.find((body) => body.stage === "plans").evidence.lifecycle).toEqual(findings);
+    expect((await runGuidedSetup({ ...options, resume: true })).exitCode).toBe(0);
+    const before = mock.uploads.length;
+    findings[0]!.terms.durationDays = 7;
+    await writeFile(file, JSON.stringify(findings));
+    const changed = await runGuidedSetup({ ...options, resume: true });
+    expect(changed.exitCode).toBe(2);
+    expect(changed.stderr).toContain("source changed");
+    expect(mock.uploads).toHaveLength(before);
+  }));
+
+it("rejects lifecycle terms changed after scan identity was captured", async () =>
+  fixture(async (cwd) => {
+    const mock = server();
+    const changedFetch: typeof fetch = async (url, init) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      if (new URL(String(url)).pathname.endsWith("/evidence") && body?.stage === "features") {
+        await writeFile(join(cwd, ".saasfunnels/setup-lifecycle.json"), "[]");
+      }
+      return mock.fetcher(url, init);
+    };
+    const result = await runGuidedSetup({ cwd, key: "fixture", apiBaseUrl: "https://app.example", send: true, resume: false, fetch: changedFetch });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Lifecycle findings changed during discovery");
+    expect(mock.uploads.map((body) => body.stage)).toEqual(["features"]);
+  }));
+
+it("automatically submits trial and cancellation evidence without a lifecycle input file", async () =>
+  fixture(async (cwd) => {
+    await writeFile(join(cwd, "lib/billing.ts"), 'import Stripe from "stripe"; const billing = new Stripe(process.env.STRIPE_SECRET!); export async function subscribe() { return billing.subscriptions.create({ trial_period_days: 14 }); } export async function cancel(id:string) { return billing.subscriptions.update(id, { cancel_at_period_end: true }); }');
+    const mock = server();
+    const result = await runGuidedSetup({ cwd, key: "fixture", apiBaseUrl: "https://app.example", send: true, resume: false, fetch: mock.fetcher });
+    expect(result.exitCode).toBe(0);
+    const evidence = mock.uploads.find((body) => body.stage === "plans").evidence;
+    expect(evidence.lifecycle).toMatchObject([
+      { family: "subscription_trial_start", terms: { durationDays: 14, paidPlanKey: null } },
+      { family: "trial_conversion", terms: { durationDays: 14, paidPlanKey: null } },
+      { family: "cancellation_save", terms: { cancellationTiming: "period_end" } },
+    ]);
+    expect(JSON.stringify(evidence.lifecycle)).not.toContain("STRIPE_SECRET");
   }));

@@ -146,3 +146,84 @@ file. No source files or credentials belong in either upload.
 Changes to those files or application source require a fresh run. Use `--resume`
 only for unchanged interrupted work. The scan identity includes reviewed inputs
 and scanner contract version, so accepted old submissions cannot hide corrections.
+
+### Lifecycle findings for Funnel preparation
+
+The plans stage can also submit `.saasfunnels/setup-lifecycle.json`, a JSON array
+of reviewed application findings. The coding agent should inspect the actual
+billing and entitlement code and include only established facts with relative
+source paths and line numbers. This file is a structured discovery input, not an
+authorization to change subscriptions or publish Funnels. It is sent only through
+the existing approved setup upload.
+
+Each finding has `family`, `subjectKey`, `state` (`supported`, `not_applicable`, or
+`unknown`), `provenance`, `reason`, nullable `entry`/`action`, and family-specific
+`terms`. For example:
+
+```json
+[
+  {
+    "family": "trial_conversion",
+    "subjectKey": null,
+    "state": "supported",
+    "provenance": [{ "file": "src/billing.ts", "line": 42 }],
+    "reason": "Subscription creation configures a trial.",
+    "entry": null,
+    "action": null,
+    "terms": {
+      "durationDays": 14,
+      "endBehavior": "paid_conversion",
+      "paymentRequirement": "required",
+      "paidPlanKey": "pro"
+    }
+  }
+]
+```
+
+These example terms are not defaults. Use `null`/`unknown` for unresolved terms
+and real discovered keys for references. Supported families and their terms are:
+
+- `trial_conversion`: durationDays, endBehavior, paymentRequirement, paidPlanKey.
+- `feature_trial`: durationDays, endBehavior, paymentRequirement, trialKey; subjectKey identifies the feature.
+- `cancellation_save`: cancellationTiming.
+- `failed_payment_recovery`: recoveryAction, providerRecovery.
+- `reactivation`: restoration, paidPlanKey.
+- `seat_expansion` and `add_on_expansion`: quantitySourceKey, quantityBasis, includedQuantity, billingTiming; subjectKey identifies the quantity dimension or add-on.
+
+See `src/setup-lifecycle-contract.ts` for the exact enum values and bounds. Missing
+findings do not establish that a journey is unsupported. A supported or
+not-applicable finding requires source evidence. Do not infer cancellation,
+recovery, restoration or seat semantics from a plan name. Runtime connection
+verification always remains a separate application check; submitted connections
+are classified as discovered even when a local declaration says tested.
+
+Changes to this file require a fresh scan; `--resume` rejects changed input.
+Files larger than 200 KB, invalid or duplicate findings, and sensitive source
+paths are rejected. No raw source or credentials belong in the findings. This
+structured input path does not itself automatically infer lifecycle behavior
+from arbitrary application code.
+
+During the ordinary source scan, Setup also discovers a bounded set of billing
+patterns automatically. It recognizes a locally imported Stripe client, literal
+subscription/Checkout `trial_period_days`, trial-end settings needing review,
+subscription cancellation calls and `cancel_at_period_end`. An invoice-payment
+call is surfaced as an unknown recovery capability, because ordinary invoice
+payment does not establish failed-payment recovery.
+
+Findings contain only structured terms and source locations. Payment collection,
+application access after expiry, destination plans, entry/action bindings and
+provider recovery policies remain unknown unless reviewed evidence establishes
+them. Conflicting durations or cancellation timings remain unknown rather than
+being resolved by file order. Source declarations do not prove installation.
+Tests, demos, ignored/sensitive files, shadowed clients and ambiguous expressions
+are excluded. This first recognizer handles direct JavaScript/TypeScript client
+calls; imported client factories, other languages, new item-level Trial Offer
+APIs and custom lifecycle implementations still need reviewed evidence. Explicit
+reviewed declarations take precedence per family/subject, as with reviewed
+pricing declarations; they are still presented for workspace approval.
+
+Provider references: [subscription cancellation](https://docs.stripe.com/billing/subscriptions/cancel),
+[Checkout free trials](https://docs.stripe.com/payments/checkout/free-trials), and
+[invoice payment](https://docs.stripe.com/api/invoices/pay). New
+[Trial Offers](https://docs.stripe.com/billing/subscriptions/trials) are a different
+contract; this recognizer does not infer their terms from older trial parameters.

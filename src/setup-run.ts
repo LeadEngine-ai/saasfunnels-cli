@@ -1,4 +1,7 @@
 import { SAASFUNNELS_CLI_VERSION } from "./identity.js";
+import { LifecycleEvidenceError, readSetupLifecycle } from "./setup-lifecycle.js";
+import { discoverLifecycleInSource, combineLifecycleFindings } from "./lifecycle-discovery.js";
+import type { SetupLifecycleFinding } from "./setup-lifecycle-contract.js";
 import { developerAnswersSchema } from "./setup-commercial.js";
 import { discoverCoverageLimitations } from "./discovery-coverage.js";
 import { createHash } from "node:crypto";
@@ -179,7 +182,9 @@ export async function runGuidedSetup(options: Options) {
     // Raw diff/content stays local. Receipts bind to the actual working tree,
     // including uncommitted installation work, rather than HEAD alone.
     const reviewedInputs = await Promise.all(
-      ["setup-pricing.json", "setup-answers.json"].map(async (name) => {
+      ["setup-pricing.json", "setup-answers.json", "setup-lifecycle.json"].map(async (name) => {
+        if (name === "setup-lifecycle.json")
+          return [name, (await readSetupLifecycle(options.cwd))?.fingerprint ?? null];
         try {
           return [
             name,
@@ -322,7 +327,13 @@ export async function runGuidedSetup(options: Options) {
     timer = setInterval(() => {
       void update(progressState, progressFailure).catch(() => {});
     }, 30_000);
-    const limitations = await discoverCoverageLimitations(options.cwd);
+    let discoveredLifecycle: SetupLifecycleFinding[] = [];
+    const limitations = await discoverCoverageLimitations(options.cwd, (file) => {
+      discoveredLifecycle = combineLifecycleFindings([
+        ...discoveredLifecycle,
+        ...discoverLifecycleInSource(file),
+      ]);
+    });
     if (limitations.length)
       options.progress?.(
         "Some app behavior needs manual review. Coverage details will appear with your findings in Setup.",
@@ -523,10 +534,14 @@ export async function runGuidedSetup(options: Options) {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      const lifecycle = await readSetupLifecycle(options.cwd);
+      if ((lifecycle?.fingerprint ?? null) !== reviewedInputs.find(([name]) => name === "setup-lifecycle.json")?.[1])
+        throw new LifecycleEvidenceError("changed");
       // Transport failures must not be reported as unsupported source syntax.
       await send({
         coverage: { status: "complete", scannedFiles: sources.length },
         ...(developerAnswers ? { developerAnswers } : {}),
+        lifecycle: combineLifecycleFindings(discoveredLifecycle, lifecycle?.findings ?? []),
         plans: [...byKey.values()],
         reviewedFiles,
         ...(limitations.length ? { limitations } : {}),
@@ -584,6 +599,7 @@ export async function runGuidedSetup(options: Options) {
     await reportFailure?.().catch(() => {});
     // Never print provider bodies, environment values, or credential-bearing git errors.
     const safe =
+      error instanceof LifecycleEvidenceError ? error.message :
       error instanceof Error &&
       /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery|Plan discovery|Repository setup)/.test(
         error.message,
