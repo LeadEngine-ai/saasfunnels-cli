@@ -1,6 +1,13 @@
+import { baselineSchema, extractSetupPatch } from "./setup-patch.js";
 import { SAASFUNNELS_CLI_VERSION } from "./identity.js";
-import { LifecycleEvidenceError, readSetupLifecycle } from "./setup-lifecycle.js";
-import { discoverLifecycleInSource, combineLifecycleFindings } from "./lifecycle-discovery.js";
+import {
+  LifecycleEvidenceError,
+  readSetupLifecycle,
+} from "./setup-lifecycle.js";
+import {
+  discoverLifecycleInSource,
+  combineLifecycleFindings,
+} from "./lifecycle-discovery.js";
 import type { SetupLifecycleFinding } from "./setup-lifecycle-contract.js";
 import { developerAnswersSchema } from "./setup-commercial.js";
 import { discoverCoverageLimitations } from "./discovery-coverage.js";
@@ -24,7 +31,7 @@ import {
 const exec = promisify(execFile);
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const contextSchema = z.object({
-  contractVersion: z.literal(3),
+  contractVersion: z.literal(4),
   minimumCliVersion: z.string(),
   workspaceId: z.string(),
   generation: z.string().regex(/^[a-f0-9]{64}$/),
@@ -121,9 +128,13 @@ export async function runGuidedSetup(options: Options) {
   try {
     options.progress?.("1/4 Checking app connection…");
     const initialContext = await request("/api/developer-tools/setup/context");
-    if (initialContext.contractVersion !== 3)
+    if (initialContext.contractVersion !== 4)
       throw new Error(
         "This app does not support this installer yet. Finish deploying the matching Setup release before retrying.",
+      );
+    if (initialContext.patchesAvailable === false)
+      throw new Error(
+        "The app connection is temporarily paused for corrections. Existing findings and decisions are retained. Retry when Setup is available.",
       );
     let context = contextSchema.parse(initialContext);
     if (!context.installationId || !context.integrationId)
@@ -182,28 +193,40 @@ export async function runGuidedSetup(options: Options) {
     // Raw diff/content stays local. Receipts bind to the actual working tree,
     // including uncommitted installation work, rather than HEAD alone.
     const reviewedInputs = await Promise.all(
-      ["setup-pricing.json", "setup-answers.json", "setup-lifecycle.json"].map(async (name) => {
-        if (name === "setup-lifecycle.json")
-          return [name, (await readSetupLifecycle(options.cwd))?.fingerprint ?? null];
-        try {
-          return [
-            name,
-            hash(
-              await readFile(join(options.cwd, ".saasfunnels", name), "utf8"),
-            ),
-          ];
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT")
-            return [name, null];
-          throw error;
-        }
-      }),
+      ["setup-pricing.json", "setup-answers.json", "setup-lifecycle.json"].map(
+        async (name) => {
+          if (name === "setup-lifecycle.json")
+            return [
+              name,
+              (await readSetupLifecycle(options.cwd))?.fingerprint ?? null,
+            ];
+          try {
+            return [
+              name,
+              hash(
+                await readFile(join(options.cwd, ".saasfunnels", name), "utf8"),
+              ),
+            ];
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT")
+              return [name, null];
+            throw error;
+          }
+        },
+      ),
     );
-    const revision = `${head}:${hash(JSON.stringify(["configuration-v3", SAASFUNNELS_CLI_VERSION, diff, sourceHashes, reviewedInputs]))}`;
+
     const remote = (
       await exec("git", ["remote", "get-url", "origin"], { cwd: options.cwd })
     ).stdout.trim();
     const repositoryKey = safeRepositoryKey(remote);
+    const baselineResponse = await request(
+      `/api/developer-tools/setup/baseline?repositoryKey=${encodeURIComponent(repositoryKey)}`,
+    );
+    const baseline = baselineSchema.parse(baselineResponse.baseline);
+    if (baselineResponse.generation !== context.generation)
+      throw new Error("The app connection changed. Start setup again.");
+    const revision = `${head}:${hash(JSON.stringify(["configuration-v4", SAASFUNNELS_CLI_VERSION, diff, sourceHashes, reviewedInputs, baseline]))}`;
     const statePath = join(options.cwd, ".saasfunnels", "setup-run.json");
     if (options.resume) {
       const saved = JSON.parse(await readFile(statePath, "utf8"));
@@ -239,6 +262,7 @@ export async function runGuidedSetup(options: Options) {
         generation: context.generation,
         repositoryKey,
         repositoryRevisionHash: hash(revision),
+        baseline,
       })
     ).run;
     if (!run) throw new Error("Setup did not return a run.");
@@ -281,6 +305,7 @@ export async function runGuidedSetup(options: Options) {
       });
       return heartbeat;
     };
+    let selection = "receiving";
     const send = (
       evidence: unknown,
       proposals?: unknown,
@@ -307,6 +332,7 @@ export async function runGuidedSetup(options: Options) {
           ...(proposals ? { proposals } : {}),
           ...(coverage ? { coverage } : {}),
         });
+        selection = result.selection ?? selection;
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
         run!.receipts[currentStage] = result.receipt ?? { complete: true };
@@ -328,12 +354,15 @@ export async function runGuidedSetup(options: Options) {
       void update(progressState, progressFailure).catch(() => {});
     }, 30_000);
     let discoveredLifecycle: SetupLifecycleFinding[] = [];
-    const limitations = await discoverCoverageLimitations(options.cwd, (file) => {
-      discoveredLifecycle = combineLifecycleFindings([
-        ...discoveredLifecycle,
-        ...discoverLifecycleInSource(file),
-      ]);
-    });
+    const limitations = await discoverCoverageLimitations(
+      options.cwd,
+      (file) => {
+        discoveredLifecycle = combineLifecycleFindings([
+          ...discoveredLifecycle,
+          ...discoverLifecycleInSource(file),
+        ]);
+      },
+    );
     if (limitations.length)
       options.progress?.(
         "Some app behavior needs manual review. Coverage details will appear with your findings in Setup.",
@@ -454,6 +483,21 @@ export async function runGuidedSetup(options: Options) {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      if (
+        (manual === null ? null : hash(manual)) !==
+        reviewedInputs.find(([name]) => name === "setup-pricing.json")?.[1]
+      )
+        throw new Error(
+          "The app connection, installer, or source changed. Start a fresh scan: npx --yes saasfunnels@latest setup run",
+        );
+      const correction =
+        manual !== null
+          ? extractSetupPatch(
+              manual,
+              context.catalogPrices,
+              baselineResponse.plans ?? [],
+            )
+          : null;
       const byKey = new Map<
         string,
         ReturnType<typeof extractSetupPricing>[number]
@@ -464,7 +508,7 @@ export async function runGuidedSetup(options: Options) {
         manual !== null
           ? [{ path: ".saasfunnels/setup-pricing.json", kind: "json" as const }]
           : candidates;
-      for (const candidate of sources) {
+      for (const candidate of correction ? [] : sources) {
         try {
           const plans = extractSetupPricing(
             manual ??
@@ -523,6 +567,7 @@ export async function runGuidedSetup(options: Options) {
         `Found ${byKey.size} plan proposals in ${reviewedFiles.length} pricing files.`,
       );
       let developerAnswers: unknown = undefined;
+      let answerInputFingerprint: string | null = null;
       try {
         const raw = await readFile(
           join(options.cwd, ".saasfunnels/setup-answers.json"),
@@ -530,20 +575,55 @@ export async function runGuidedSetup(options: Options) {
         );
         if (raw.length > 100_000)
           throw new Error("Developer answers exceed the upload limit.");
+        answerInputFingerprint = hash(raw);
         developerAnswers = developerAnswersSchema.parse(JSON.parse(raw));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      if (
+        answerInputFingerprint !==
+        reviewedInputs.find(([name]) => name === "setup-answers.json")?.[1]
+      )
+        throw new Error(
+          "The app connection, installer, or source changed. Start a fresh scan: npx --yes saasfunnels@latest setup run",
+        );
       const lifecycle = await readSetupLifecycle(options.cwd);
-      if ((lifecycle?.fingerprint ?? null) !== reviewedInputs.find(([name]) => name === "setup-lifecycle.json")?.[1])
+      if (
+        (lifecycle?.fingerprint ?? null) !==
+        reviewedInputs.find(([name]) => name === "setup-lifecycle.json")?.[1]
+      )
         throw new LifecycleEvidenceError("changed");
       // Transport failures must not be reported as unsupported source syntax.
       await send({
         coverage: { status: "complete", scannedFiles: sources.length },
         ...(developerAnswers ? { developerAnswers } : {}),
-        lifecycle: combineLifecycleFindings(discoveredLifecycle, lifecycle?.findings ?? []),
-        plans: [...byKey.values()],
-        reviewedFiles,
+        lifecycle: combineLifecycleFindings(
+          discoveredLifecycle,
+          lifecycle?.findings ?? [],
+        ),
+        plans:
+          correction?.mode === "patch"
+            ? []
+            : correction
+              ? correction.patches
+              : [...byKey.values()],
+        ...(correction?.mode === "patch"
+          ? { patches: correction.patches }
+          : {}),
+        update: {
+          mode: correction?.mode ?? "snapshot",
+          baseline,
+          removals: correction?.removals ?? [],
+          ...(correction?.withdrawDeveloperAnswers
+            ? { withdrawDeveloperAnswers: correction.withdrawDeveloperAnswers }
+            : {}),
+          ...(correction?.withdrawLifecycle
+            ? { withdrawLifecycle: correction.withdrawLifecycle }
+            : {}),
+        },
+        reviewedFiles: correction
+          ? [".saasfunnels/setup-pricing.json"]
+          : reviewedFiles,
         ...(limitations.length ? { limitations } : {}),
       });
     }
@@ -590,8 +670,7 @@ export async function runGuidedSetup(options: Options) {
     }
     return {
       exitCode: 0,
-      stdout:
-        "Discovery submitted. Open https://app.saasfunnels.ai/app/setup to review findings and verify installation. Payment transactions have not been tested by this command.\n",
+      stdout: `Discovery submitted. ${selection === "rejected" ? "This submission was rejected in Setup. Current findings and decisions are retained." : selection === "superseded" ? "A newer submission is selected in Setup. Current findings and decisions are retained." : selection === "complete_candidate" ? "Existing findings and decisions are retained; review proposed removals or finish the pending publication in Setup." : "Corrections are ready for review; unrelated records and saved decisions are retained."} Open https://app.saasfunnels.ai/app/setup. Configuration has not been published.\n`,
       stderr: "",
     };
   } catch (error) {
@@ -599,13 +678,14 @@ export async function runGuidedSetup(options: Options) {
     await reportFailure?.().catch(() => {});
     // Never print provider bodies, environment values, or credential-bearing git errors.
     const safe =
-      error instanceof LifecycleEvidenceError ? error.message :
-      error instanceof Error &&
-      /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery|Plan discovery|Repository setup)/.test(
-        error.message,
-      )
+      error instanceof LifecycleEvidenceError
         ? error.message
-        : "Setup could not finish. Check local repository access and developer credentials, then resume.";
+        : error instanceof Error &&
+            /^(Setup request failed|Connect Stripe|The app connection|Use a repository|Feature discovery|Plan discovery|Repository setup|This app does not support)/.test(
+              error.message,
+            )
+          ? error.message
+          : "Setup could not finish. Check local repository access and developer credentials, then resume.";
     return { exitCode: 2, stdout: "", stderr: safe + "\n" };
   } finally {
     clearInterval(timer);
@@ -656,15 +736,27 @@ export async function submitApprovedSetupPlans(input: {
     throw new Error(
       "Refresh the connected Stripe catalog before submitting plan evidence.",
     );
+  const baselineResponse = await call(
+    `/api/developer-tools/setup/baseline?repositoryKey=${encodeURIComponent(input.repositoryKey)}`,
+  );
+  const baseline = baselineSchema.parse(baselineResponse.baseline);
   const { run } = await call("/api/developer-tools/setup/runs", {
     generation: context.generation,
     repositoryKey: input.repositoryKey,
     repositoryRevisionHash: hash(input.revision),
+    baseline,
   });
   await call("/api/developer-tools/setup/evidence", {
     runId: run.id,
     stage: "plans",
-    evidence: input.evidence,
+    evidence: {
+      ...input.evidence,
+      coverage: {
+        status: "complete",
+        scannedFiles: input.evidence.reviewedFiles.length,
+      },
+      update: { mode: "snapshot", baseline, removals: [] },
+    },
   });
   return { accepted: true };
 }

@@ -55,6 +55,13 @@ function server(failPlans = false) {
   const fetcher: typeof fetch = async (url, init) => {
     const path = new URL(String(url)).pathname;
     const body = init?.body ? JSON.parse(String(init.body)) : null;
+    if (path.endsWith("/baseline"))
+      return Response.json({
+        baseline: { revision: null, fingerprint: null },
+        generation: "a".repeat(64),
+        plans: [],
+        questions: [],
+      });
     if (path.endsWith("/context"))
       return Response.json({
         workspaceId: "workspace",
@@ -62,7 +69,7 @@ function server(failPlans = false) {
         installationId: "installation",
         integrationId: "stripe",
         environment: "production",
-        contractVersion: 3,
+        contractVersion: 4,
         minimumCliVersion: "0.4.0",
         catalogReady: true,
         planNames: [],
@@ -113,6 +120,11 @@ it("finds pricing beyond ten filename matches and completes all stages with lite
       "branches",
     ]);
     expect(mock.uploads[1].evidence).toEqual({
+      update: {
+        mode: "snapshot",
+        baseline: { revision: null, fingerprint: null },
+        removals: [],
+      },
       coverage: { status: "complete", scannedFiles: 16 },
       lifecycle: [],
       plans: [
@@ -196,17 +208,40 @@ it("includes reviewed lifecycle findings in the plans stage and invalidates resu
   fixture(async (cwd) => {
     await mkdir(join(cwd, ".saasfunnels"), { recursive: true });
     const file = join(cwd, ".saasfunnels/setup-lifecycle.json");
-    const findings = [{
-      family: "trial_conversion", subjectKey: null, state: "supported",
-      provenance: [{ file: "lib/app.ts", line: 1 }], reason: "Reviewed trial behavior", entry: null, action: null,
-      terms: { durationDays: 14, endBehavior: "paid_conversion", paymentRequirement: "required", paidPlanKey: "pro" },
-    }];
+    const findings = [
+      {
+        family: "trial_conversion",
+        subjectKey: null,
+        state: "supported",
+        provenance: [{ file: "lib/app.ts", line: 1 }],
+        reason: "Reviewed trial behavior",
+        entry: null,
+        action: null,
+        terms: {
+          durationDays: 14,
+          endBehavior: "paid_conversion",
+          paymentRequirement: "required",
+          paidPlanKey: "pro",
+        },
+      },
+    ];
     await writeFile(file, JSON.stringify(findings));
     const mock = server();
-    const options = { cwd, key: "fixture", apiBaseUrl: "https://app.example", send: true, resume: false, fetch: mock.fetcher };
+    const options = {
+      cwd,
+      key: "fixture",
+      apiBaseUrl: "https://app.example",
+      send: true,
+      resume: false,
+      fetch: mock.fetcher,
+    };
     expect((await runGuidedSetup(options)).exitCode).toBe(0);
-    expect(mock.uploads.find((body) => body.stage === "plans").evidence.lifecycle).toEqual(findings);
-    expect((await runGuidedSetup({ ...options, resume: true })).exitCode).toBe(0);
+    expect(
+      mock.uploads.find((body) => body.stage === "plans").evidence.lifecycle,
+    ).toEqual(findings);
+    expect((await runGuidedSetup({ ...options, resume: true })).exitCode).toBe(
+      0,
+    );
     const before = mock.uploads.length;
     findings[0]!.terms.durationDays = 7;
     await writeFile(file, JSON.stringify(findings));
@@ -221,28 +256,61 @@ it("rejects lifecycle terms changed after scan identity was captured", async () 
     const mock = server();
     const changedFetch: typeof fetch = async (url, init) => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
-      if (new URL(String(url)).pathname.endsWith("/evidence") && body?.stage === "features") {
+      if (
+        new URL(String(url)).pathname.endsWith("/evidence") &&
+        body?.stage === "features"
+      ) {
         await writeFile(join(cwd, ".saasfunnels/setup-lifecycle.json"), "[]");
       }
       return mock.fetcher(url, init);
     };
-    const result = await runGuidedSetup({ cwd, key: "fixture", apiBaseUrl: "https://app.example", send: true, resume: false, fetch: changedFetch });
+    const result = await runGuidedSetup({
+      cwd,
+      key: "fixture",
+      apiBaseUrl: "https://app.example",
+      send: true,
+      resume: false,
+      fetch: changedFetch,
+    });
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("Lifecycle findings changed during discovery");
+    expect(result.stderr).toContain(
+      "Lifecycle findings changed during discovery",
+    );
     expect(mock.uploads.map((body) => body.stage)).toEqual(["features"]);
   }));
 
 it("automatically submits trial and cancellation evidence without a lifecycle input file", async () =>
   fixture(async (cwd) => {
-    await writeFile(join(cwd, "lib/billing.ts"), 'import Stripe from "stripe"; const billing = new Stripe(process.env.STRIPE_SECRET!); export async function subscribe() { return billing.subscriptions.create({ trial_period_days: 14 }); } export async function cancel(id:string) { return billing.subscriptions.update(id, { cancel_at_period_end: true }); }');
+    await writeFile(
+      join(cwd, "lib/billing.ts"),
+      'import Stripe from "stripe"; const billing = new Stripe(process.env.STRIPE_SECRET!); export async function subscribe() { return billing.subscriptions.create({ trial_period_days: 14 }); } export async function cancel(id:string) { return billing.subscriptions.update(id, { cancel_at_period_end: true }); }',
+    );
     const mock = server();
-    const result = await runGuidedSetup({ cwd, key: "fixture", apiBaseUrl: "https://app.example", send: true, resume: false, fetch: mock.fetcher });
+    const result = await runGuidedSetup({
+      cwd,
+      key: "fixture",
+      apiBaseUrl: "https://app.example",
+      send: true,
+      resume: false,
+      fetch: mock.fetcher,
+    });
     expect(result.exitCode).toBe(0);
-    const evidence = mock.uploads.find((body) => body.stage === "plans").evidence;
+    const evidence = mock.uploads.find(
+      (body) => body.stage === "plans",
+    ).evidence;
     expect(evidence.lifecycle).toMatchObject([
-      { family: "subscription_trial_start", terms: { durationDays: 14, paidPlanKey: null } },
-      { family: "trial_conversion", terms: { durationDays: 14, paidPlanKey: null } },
-      { family: "cancellation_save", terms: { cancellationTiming: "period_end" } },
+      {
+        family: "subscription_trial_start",
+        terms: { durationDays: 14, paidPlanKey: null },
+      },
+      {
+        family: "trial_conversion",
+        terms: { durationDays: 14, paidPlanKey: null },
+      },
+      {
+        family: "cancellation_save",
+        terms: { cancellationTiming: "period_end" },
+      },
     ]);
     expect(JSON.stringify(evidence.lifecycle)).not.toContain("STRIPE_SECRET");
   }));

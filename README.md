@@ -106,7 +106,11 @@ The scanner reads supported application files one at a time without the old 500-
 
 Static pricing supports literal spreads, capability/quota maps, unlimited limits, and exact Stripe lookup-key matching. It never executes customer code. Pricing definitions are inspected beyond the first ten filename matches; unrelated helpers do not count as plans.
 
-If extraction is unsupported, `.saasfunnels/setup-review.json` lists the files and reasons. Correct those declarations or review a `.saasfunnels/setup-pricing.json` file with `{ "plans": [{ "key": "pro", "name": "Pro", "features": { "export": true }, "prices": [{ "key": "price_ACTUAL_ID" }] }] }`, then resume. Use real identifiers from the connected merchant. Raw source files are never uploaded by guided setup or the pricing handoff.
+If extraction is unsupported, `.saasfunnels/setup-review.json` lists the files and reasons. Correct those declarations or prepare a targeted `.saasfunnels/setup-pricing.json` patch such as `{ "plans": [{ "key": "pro", "features": { "export": true } }] }`, then start a fresh `setup run` (changed inputs cannot resume an older run). The CLI fetches the existing normalized evidence as its baseline, including in a fresh worktree. Omitted plans, features, quotas, components, and prices are retained. Source content and credentials are never uploaded.
+
+Patch mode is the default. Components replace only their matching component key; prices change only when explicitly supplied. Use `removals: [{ "planKey": "pro", "componentKey": "extra_seats" }]` for an exact removal. A full replacement must explicitly use `"mode": "snapshot"`. Removed commercial evidence is held for administrator review, preserving the current review until selected. `withdrawDeveloperAnswers` takes question IDs; `withdrawLifecycle` takes `{family, subjectKey}` identities for explicit withdrawals. Submission and selection do not publish configuration.
+
+CLI 0.5.0 requires Setup contract 4 and stops before creating a run against an older application. Deploy the compatible server and preservation migration before releasing this CLI. Supported 0.4.x installers retain their v3 contract, with server-side completeness and removal guards.
 
 Discovery follows Git ignore rules (including custom build folders) while keeping tracked application sources and new, non-ignored source files. Standalone folders without Git use the standard source filters.
 

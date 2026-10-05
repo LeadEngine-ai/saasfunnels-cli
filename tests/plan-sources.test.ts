@@ -14,7 +14,9 @@ import {
 const tempDirs: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
 });
 
 async function fixture(files: Record<string, string>) {
@@ -49,7 +51,9 @@ describe("plan source discovery", () => {
       "ee/stripe/utils.ts",
     ]);
     expect(candidates[0]?.hasStripePriceId).toBe(true);
-    expect(candidates[0]?.rationale).toBe("The file references a Stripe price.");
+    expect(candidates[0]?.rationale).toBe(
+      "The file references a Stripe price.",
+    );
   });
 
   it("finds a pricing definition and ranks a Stripe price highest", async () => {
@@ -81,10 +85,13 @@ describe("plan source discovery", () => {
       "config/plans.ts": plansFile,
       "secrets/plans.ts": plansFile,
       ".env.plans.ts": plansFile,
-      "credentials/pricing.json": '{"pro":{"priceId":"price_1QAbCdEfGhIjKlMnOpQrStUv"}}',
+      "credentials/pricing.json":
+        '{"pro":{"priceId":"price_1QAbCdEfGhIjKlMnOpQrStUv"}}',
     });
 
-    const paths = (await discoverPlanSourceCandidates({ cwd })).map((c) => c.path);
+    const paths = (await discoverPlanSourceCandidates({ cwd })).map(
+      (c) => c.path,
+    );
 
     expect(paths).toContain("config/plans.ts");
     expect(paths.some((path) => path.includes("secrets/"))).toBe(false);
@@ -102,11 +109,14 @@ describe("plan source discovery", () => {
 
   it("names the offending file rather than letting the server reject the batch", async () => {
     const cwd = await fixture({ "src/plans.ts": plansFile });
-    const tooMany = Array.from({ length: 13 }, (_, index) => `src/plans${index}.ts`);
-
-    await expect(buildPlanMappingHandoff({ cwd, files: tooMany })).rejects.toThrow(
-      /at most 12 files/,
+    const tooMany = Array.from(
+      { length: 13 },
+      (_, index) => `src/plans${index}.ts`,
     );
+
+    await expect(
+      buildPlanMappingHandoff({ cwd, files: tooMany }),
+    ).rejects.toThrow(/at most 12 files/);
   });
 
   it("is idempotent for the same revision", () => {
@@ -132,12 +142,16 @@ describe("plan source discovery", () => {
 
 describe("plans CLI", () => {
   it("exits cleanly when a repository has no pricing definition", async () => {
-    const cwd = await fixture({ "src/checkout.ts": "export function checkout() {}\n" });
+    const cwd = await fixture({
+      "src/checkout.ts": "export function checkout() {}\n",
+    });
 
     const discovered = await runSaaSFunnelsCli(["plans", "discover"], { cwd });
 
     expect(discovered.exitCode).toBe(0);
-    expect(discovered.stdout).toContain("No plan or pricing definition files found");
+    expect(discovered.stdout).toContain(
+      "No plan or pricing definition files found",
+    );
   });
 
   it("proposes without writing until --apply", async () => {
@@ -188,7 +202,8 @@ describe("plans CLI", () => {
   it("extracts only approved files locally and sends normalized evidence with developer auth", async () => {
     const cwd = await fixture({
       "src/plans.ts": plansFile,
-      "src/pricing.ts": "export const PRICING = { pro: 'price_1QOtherAbCdEfGhIjKlMnOp' };\n",
+      "src/pricing.ts":
+        "export const PRICING = { pro: 'price_1QOtherAbCdEfGhIjKlMnOp' };\n",
     });
     await runSaaSFunnelsCli(["plans", "discover", "--apply"], { cwd });
     // Narrow the approved list by hand, the way a reviewer would.
@@ -202,8 +217,29 @@ describe("plans CLI", () => {
     const fetchImpl = (async (url: string, init: RequestInit) => {
       expect(new Headers(init.headers).get("authorization")).toBeTruthy();
       const path = new URL(String(url)).pathname;
-      if (path.endsWith("/context")) return Response.json({ workspaceId: "workspace", generation: "a".repeat(64), installationId: "installation", integrationId: "11111111-1111-4111-8111-111111111111", environment: "test", contractVersion: 3, minimumCliVersion: "0.4.0", catalogReady: true, planNames: ["free", "pro"] });
-      if (path.endsWith("/runs")) return Response.json({ run: { id: "11111111-1111-4111-8111-111111111111" } });
+      if (path.endsWith("/baseline"))
+        return Response.json({
+          baseline: { revision: null, fingerprint: null },
+          generation: "a".repeat(64),
+          plans: [],
+          questions: [],
+        });
+      if (path.endsWith("/context"))
+        return Response.json({
+          workspaceId: "workspace",
+          generation: "a".repeat(64),
+          installationId: "installation",
+          integrationId: "11111111-1111-4111-8111-111111111111",
+          environment: "test",
+          contractVersion: 4,
+          minimumCliVersion: "0.4.0",
+          catalogReady: true,
+          planNames: ["free", "pro"],
+        });
+      if (path.endsWith("/runs"))
+        return Response.json({
+          run: { id: "11111111-1111-4111-8111-111111111111" },
+        });
       expect(path).toBe("/api/developer-tools/setup/evidence");
       body = JSON.parse(init.body as string);
       return Response.json({ accepted: true });
@@ -239,7 +275,11 @@ describe("plans CLI", () => {
         "--api-base-url",
         "https://app.saasfunnels.test",
       ],
-      { cwd, env: { SAASFUNNELS_API_KEY: "pv_test_key_value_1234567890" }, fetch: fetchImpl },
+      {
+        cwd,
+        env: { SAASFUNNELS_API_KEY: "pv_test_key_value_1234567890" },
+        fetch: fetchImpl,
+      },
     );
 
     expect(sent.exitCode).toBe(0);
