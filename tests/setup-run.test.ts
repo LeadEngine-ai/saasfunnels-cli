@@ -101,6 +101,13 @@ it.each(["test", "production"] as const)(
       const fetcher: typeof fetch = async (url, init) => {
         const path = new URL(String(url)).pathname;
         const body = init?.body ? JSON.parse(String(init.body)) : null;
+        if (path.endsWith("/baseline"))
+          return Response.json({
+            baseline: { revision: null, fingerprint: null },
+            generation: "a".repeat(64),
+            plans: [],
+            questions: [],
+          });
         if (path.endsWith("/context"))
           return Response.json({
             workspaceId: "workspace",
@@ -108,7 +115,7 @@ it.each(["test", "production"] as const)(
             installationId: "installation",
             integrationId: "stripe",
             environment,
-            contractVersion: 3,
+            contractVersion: 4,
             minimumCliVersion: "0.4.0",
             catalogReady: true,
             planNames: [],
@@ -171,3 +178,22 @@ it.each(["test", "production"] as const)(
     }
   },
 );
+it("stops before creating a run when a v4 installer encounters a v3 server", async () => {
+  let requests = 0;
+  const result = await runGuidedSetup({
+    cwd: "/tmp",
+    apiBaseUrl: "https://app.example",
+    key: "fixture-only",
+    send: true,
+    resume: false,
+    fetch: async () => {
+      requests++;
+      return Response.json({ contractVersion: 3 });
+    },
+  });
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain(
+    "Finish deploying the matching Setup release",
+  );
+  expect(requests).toBe(1);
+});

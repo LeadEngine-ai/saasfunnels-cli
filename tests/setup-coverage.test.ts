@@ -48,6 +48,13 @@ it.each([
         fetch: async (url, init) => {
           const path = new URL(String(url)).pathname;
           const body = init?.body ? JSON.parse(String(init.body)) : null;
+          if (path.endsWith("/baseline"))
+            return Response.json({
+              baseline: { revision: null, fingerprint: null },
+              generation: "a".repeat(64),
+              plans: [],
+              questions: [],
+            });
           if (path.endsWith("/context"))
             return Response.json({
               workspaceId: "workspace",
@@ -55,7 +62,7 @@ it.each([
               installationId: "installation",
               integrationId: "stripe",
               environment: "production",
-              contractVersion: 3,
+              contractVersion: 4,
               minimumCliVersion: "0.4.0",
               catalogReady: true,
               planNames: [],
@@ -81,7 +88,7 @@ it.each([
             sourceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
           }),
         ]);
-        expect(output.stdout).toContain("review findings");
+        expect(output.stdout).toContain("ready for review");
       } else {
         expect(output.exitCode).toBe(2);
         expect(output.stderr).toContain("Feature discovery needs attention");

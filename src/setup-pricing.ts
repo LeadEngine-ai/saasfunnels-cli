@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { quotaSchema, componentSchema } from "./setup-commercial.js";
+import {
+  quotaSchema,
+  componentSchema,
+  provenanceSchema,
+} from "./setup-commercial.js";
 import { isProductNode } from "./source-analysis.js";
 import ts from "typescript";
 import { parseDocument } from "yaml";
@@ -11,6 +15,7 @@ type Plan = {
   features: Record<string, boolean | number | "unlimited">;
   prices: { key: string }[];
   productKey?: string;
+  provenance?: Array<z.infer<typeof provenanceSchema>>;
   quotas?: Record<string, z.infer<typeof quotaSchema>>;
   components?: Array<z.infer<typeof componentSchema>>;
 };
@@ -401,6 +406,14 @@ export function extractSetupPricing(
         name,
         features,
         prices,
+        ...(row.provenance !== undefined
+          ? {
+              provenance: z
+                .array(provenanceSchema)
+                .max(12)
+                .parse(row.provenance),
+            }
+          : {}),
         ...(typeof productKey === "string" ? { productKey } : {}),
         ...(Object.keys(quotas).length ? { quotas } : {}),
         ...(row.components !== undefined && !options.featuresOnly
