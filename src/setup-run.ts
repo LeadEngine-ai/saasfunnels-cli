@@ -38,6 +38,7 @@ const contextSchema = z.object({
   installationId: z.string().nullable(),
   integrationId: z.string().nullable(),
   environment: z.enum(["test", "production"]),
+  sharedInstallation: z.object({ registryRevision: z.number().int().nonnegative().nullable(), fingerprint: z.string().nullable(), verified: z.boolean() }).optional(),
   catalogReady: z.boolean(),
   planNames: z.array(z.string()),
   catalogPrices: z
@@ -267,7 +268,7 @@ export async function runGuidedSetup(options: Options) {
     ).run;
     if (!run) throw new Error("Setup did not return a run.");
     await mkdir(join(options.cwd, ".saasfunnels"), { recursive: true });
-    await writeFile(
+    const saveRun = () => writeFile(
       statePath,
       JSON.stringify(
         {
@@ -275,13 +276,30 @@ export async function runGuidedSetup(options: Options) {
           generation: context.generation,
           repositoryKey,
           revision,
-          runId: run.id,
+          runId: run!.id,
+          receipts: run!.receipts,
         },
         null,
         2,
       ) + "\n",
       { mode: 0o600 },
     );
+    await saveRun();
+    // Only an actual installed binding can be submitted. A missing file does
+    // not erase existing server evidence or require another catalog upload.
+    try {
+      const shared = JSON.parse(await readFile(join(options.cwd, ".saasfunnels", "shared-installation.json"), "utf8"));
+      if (context.sharedInstallation?.registryRevision == null)
+        throw new Error("The app connection has not issued a verified identity yet. Complete its shared installation first.");
+      await request("/api/developer-tools/setup/installation", {
+        ...shared, schemaVersion: 1, installationId: context.installationId,
+        installationRevision: context.sharedInstallation.registryRevision,
+        integrationId: context.integrationId, environment: context.environment,
+        repositoryKey, repositoryRevision: head,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     const update = (
       state: "running" | "waiting" | "failed",
       failureCode: string | null = null,
@@ -336,6 +354,7 @@ export async function runGuidedSetup(options: Options) {
         if (typeof result.sequence === "number")
           run!.sequence = result.sequence;
         run!.receipts[currentStage] = result.receipt ?? { complete: true };
+        await saveRun();
         if (currentStage === "plans")
           run!.planNames =
             result.planNames ??

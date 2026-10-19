@@ -114,6 +114,8 @@ CLI 0.5.0 requires Setup contract 4 and stops before creating a run against an o
 
 Discovery follows Git ignore rules (including custom build folders) while keeping tracked application sources and new, non-ignored source files. Standalone folders without Git use the standard source filters.
 
+The coding-agent installation handoff can also create `.saasfunnels/shared-installation.json` with the shared host's source binding, supported entry families, and `entryBindings` naming each installed application event, API invocation, or lifecycle entry by its exact `kind` and `key`. Setup submits that binding once using the existing workspace, integration, environment, and installation revision. It records progress after each accepted stage. If the file is absent, existing workspace installation evidence is preserved; creating another Funnel never requires this file or another catalog upload. The application must still verify the installed host and hooks at runtime before Setup marks them connected.
+
 The command does not implement arbitrary payment code, approve feature access, or verify transactions. Complete **Review and verify** in Setup after deploying the runtime and payment integration. Requires the server's guided setup API release.
 
 ### Discovery accuracy and review

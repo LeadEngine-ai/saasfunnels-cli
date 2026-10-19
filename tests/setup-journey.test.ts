@@ -142,6 +142,8 @@ it("finds pricing beyond ten filename matches and completes all stages with lite
       exitCode: 0,
     });
     expect(mock.uploads).toHaveLength(3);
+    const saved = JSON.parse(await readFile(join(cwd, ".saasfunnels/setup-run.json"), "utf8"));
+    expect(saved.receipts).toMatchObject({ features: { complete: true }, plans: { complete: true }, branches: { complete: true } });
     expect(progress.some((line) => line.includes("17 files"))).toBe(true);
   }));
 it("reports network failure as transport failure, not a request to rewrite pricing", async () =>

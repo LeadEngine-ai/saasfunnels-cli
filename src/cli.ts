@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { resolveSetupAccess } from "./setup-access.js";
 import { dirname, join, resolve } from "node:path";
 import { extractSetupPricing } from "./setup-pricing.js";
-import { runGuidedSetup, submitApprovedSetupPlans } from "./setup-run.js";
+import { runGuidedSetup, submitApprovedSetupPlans, safeRepositoryKey } from "./setup-run.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   getDeveloperToolAgentHandoffArtifacts,
@@ -462,7 +464,11 @@ async function commandFeatures(
   }
   if (args[0] === "handoff") {
     const path = flagString(flags, "file") ?? ".saasfunnels/catalog.yaml";
-    const repositoryRevision = flagString(flags, "repository-revision");
+    const gitValue = async (...args: string[]) => {
+      try { return (await promisify(execFile)("git", args, { cwd: cwd(options), timeout: 5000, maxBuffer: 8192 })).stdout.trim(); }
+      catch { return ""; }
+    };
+    const repositoryRevision = flagString(flags, "repository-revision") ?? await gitValue("rev-parse", "HEAD");
     if (!repositoryRevision) {
       return result(
         2,
@@ -472,7 +478,11 @@ async function commandFeatures(
     }
     // The repository and its discovery roots identify the drift lineage, so a
     // scan of one repository can never become the baseline for another.
-    const repositoryKey = flagString(flags, "repository-key");
+    let repositoryKey = flagString(flags, "repository-key");
+    if (!repositoryKey) {
+      const remote = await gitValue("remote", "get-url", "origin");
+      if (remote) { try { repositoryKey = safeRepositoryKey(remote); } catch {} }
+    }
     if (!repositoryKey) {
       return result(
         2,
@@ -504,10 +514,28 @@ async function commandFeatures(
       .split(",")
       .map((root) => root.trim())
       .filter(Boolean);
-    const source = await filesystem(options).readFile(
-      resolve(cwd(options), path),
-      "utf8",
-    );
+    let source: string;
+    try { source = await filesystem(options).readFile(resolve(cwd(options), path), "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const key = envValue(options, SAASFUNNELS_ENV.apiKey);
+      if (key && !flagString(flags, "file")) {
+        const query = new URLSearchParams({ repositoryKey, repositoryRevision, environment: flagString(flags, "environment") ?? "production", ...(flagString(flags, "discovery-roots") ? { discoveryRoots: JSON.stringify([...discoveryRoots].sort()) } : {}) });
+        try {
+          const response = await (options.fetch ?? fetch)(`${apiBaseUrl(options, flags)}/api/developer-tools/features/instrumentation?${query}`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
+          if (response.ok) {
+            const evidence = await response.json() as { reused?: boolean; currentRevision?: boolean; manifestFingerprint?: string; validatedAt?: string };
+            if (evidence.reused === true) return jsonMode(flags) ? jsonResult(0, { reused: true, currentRevision: evidence.currentRevision === true, manifestFingerprint: evidence.manifestFingerprint, validatedAt: evidence.validatedAt }) : result(0,
+              `Reused the existing workspace Feature evidence. No catalog was uploaded.${evidence.currentRevision ? "" : " This is the previous scan, not verification of this checkout; Setup shows any remaining review."} Open Setup to continue.\n`);
+          } else if (response.status !== 404) {
+            return result(2, "", "Workspace Feature evidence could not be checked. Open Setup to check the connection and resume; your existing catalog has not changed.\n");
+          }
+        } catch {
+          return result(2, "", "Workspace Feature evidence could not be checked. Open Setup to check the connection and resume; your existing catalog has not changed.\n");
+        }
+      }
+      return result(2, "", "No local discovery file was found. Open Setup to reuse your workspace catalog and finish any missing connection steps. Do not recreate the catalog.\n");
+    }
     const validation = parseFeatureManifestSource(source);
     if (!validation.ok || !validation.manifest) {
       return jsonMode(flags)
