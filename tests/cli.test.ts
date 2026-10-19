@@ -23,6 +23,43 @@ afterEach(async () => {
 });
 
 describe("SaaSFunnels CLI", () => {
+  it.each([true, false])("reuses scoped workspace evidence without sending another catalog (current=%s)", async (currentRevision) => {
+    const cwd = await temporaryWorkspace();
+    const fetcher = vi.fn(async () => Response.json({ reused: true, currentRevision }));
+    const result = await runSaaSFunnelsCli(["features", "handoff", "--repository-key", "example/app", "--repository-revision", "a".repeat(40), "--environment", "test", "--send"], {
+      cwd, env: { SAASFUNNELS_API_KEY: "fixture" }, fetch: fetcher,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("No catalog was uploaded.");
+    expect(result.stdout.includes("previous scan")).toBe(!currentRevision);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new URL(url).searchParams.get("environment")).toBe("test");
+    expect(new URL(url).searchParams.get("repositoryKey")).toBe("example/app");
+    expect(init.body).toBeUndefined();
+    expect(init.method).toBeUndefined();
+  });
+
+  it("distinguishes an unavailable evidence check from a missing catalog without exposing the response", async () => {
+    const cwd = await temporaryWorkspace();
+    const result = await runSaaSFunnelsCli(["features", "handoff", "--repository-key", "example/app", "--repository-revision", "a".repeat(40)], {
+      cwd, env: { SAASFUNNELS_API_KEY: "fixture" }, fetch: async () => new Response("private provider payload", { status: 503 }),
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("could not be checked");
+    expect(result.stderr).not.toContain("private provider payload");
+  });
+
+  it("does not silently replace an explicit missing file with historical evidence", async () => {
+    const cwd = await temporaryWorkspace();
+    const fetcher = vi.fn();
+    const result = await runSaaSFunnelsCli(["features", "handoff", "--file", "missing.yaml", "--repository-key", "example/app", "--repository-revision", "a".repeat(40)], {
+      cwd, env: { SAASFUNNELS_API_KEY: "fixture" }, fetch: fetcher,
+    });
+    expect(result.exitCode).toBe(2);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("exposes canonical help and a stable local verify contract", async () => {
     const help = await runSaaSFunnelsCli(["--help"]);
     const verified = await runSaaSFunnelsCli(["verify", "--json"]);
