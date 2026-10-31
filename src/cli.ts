@@ -1374,7 +1374,7 @@ export async function runSaaSFunnelsCli(
       return result(0, usage());
     if (command === "init") return await commandInit(parsed.flags, options);
     if (command === "setup") {
-      const help = "SaaSFunnels setup\n\nRun npx --yes saasfunnels@latest setup in your app repository.\nIt checks access, asks before sending findings, and discovers features and plans for review.\nUse --resume after an interruption, or --env-file .env.local to load developer access.\nFor automation, supply SAASFUNNELS_API_KEY and explicit upload approval with --send --non-interactive.\nApp implementation, deployment and payment verification remain in https://app.saasfunnels.ai/app/setup.\n";
+      const help = "SaaSFunnels setup\n\nRun npx --yes saasfunnels@latest setup in your app repository.\nIt checks access, asks before sending findings, and discovers features and plans for review.\nUse --resume after an interruption, or --env-file .env.local to load developer access.\nFor automation, supply SAASFUNNELS_API_KEY and explicit upload approval with --send --non-interactive.\nApp implementation, deployment and payment verification remain in https://app.saasfunnels.com/app/setup.\n";
       if (hasFlag(parsed.flags, "help") || args[0] === "help") return result(0, help);
       if (args.length > 1 || (args[0] && args[0] !== "run")) return result(2, "", help);
       const interactive = !jsonMode(parsed.flags) && !hasFlag(parsed.flags, "non-interactive");

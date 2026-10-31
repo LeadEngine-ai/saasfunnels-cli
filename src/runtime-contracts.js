@@ -65,7 +65,7 @@ You are adding SaaSFunnels Direct API events to this customer application. Treat
 - Endpoint: \`${endpoint}\`
 - Auth header: \`Authorization: Bearer ${ingestKeyPlaceholder}\`
 - Environment variable: \`SAASFUNNELS_INGEST_API_KEY=${ingestKeyPlaceholder}\`
-- Help article: \`https://docs.saasfunnels.ai/integrations-and-sources/direct-api-installation\`
+- Help article: \`https://docs.saasfunnels.com/integrations-and-sources/direct-api-installation\`
 
 ## Direct API-first event discovery
 

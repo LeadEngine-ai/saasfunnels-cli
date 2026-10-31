@@ -1,12 +1,12 @@
 {
   "name": "saasfunnels",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": false,
   "description": "SaaSFunnels CLI and local stdio MCP server",
   "author": "SaaSFunnels",
-  "homepage": "https://docs.saasfunnels.ai/developer-tools/saasfunnels-cli",
+  "homepage": "https://docs.saasfunnels.com/developer-tools/saasfunnels-cli",
   "bugs": {
-    "email": "support@saasfunnels.ai",
+    "email": "support@saasfunnels.com",
     "url": "https://github.com/LeadEngine-ai/saasfunnels-cli/issues"
   },
   "repository": {

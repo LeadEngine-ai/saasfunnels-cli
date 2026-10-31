@@ -15,7 +15,7 @@ function runExecutable(executable, args) {
     encoding: "utf8",
     env: {
       ...process.env,
-      SAASFUNNELS_API_BASE_URL: "https://app.saasfunnels.ai",
+      SAASFUNNELS_API_BASE_URL: "https://app.saasfunnels.com",
     },
   });
   if (result.status !== 0) {
