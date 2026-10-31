@@ -23,6 +23,19 @@ afterEach(async () => {
 });
 
 describe("SaaSFunnels CLI", () => {
+  it.each([
+    { args: [], env: {}, expected: "https://app.saasfunnels.com" },
+    { args: [], env: { PREVENUE_API_BASE_URL: "https://app.saasfunnels.ai" }, expected: "https://app.saasfunnels.ai" },
+    { args: [], env: { SAASFUNNELS_API_BASE_URL: "http://localhost:3002/", PREVENUE_API_BASE_URL: "https://app.saasfunnels.ai" }, expected: "http://localhost:3002" },
+    { args: ["--api-base-url", "https://preview.example.com/"], env: { SAASFUNNELS_API_BASE_URL: "https://app.saasfunnels.ai" }, expected: "https://preview.example.com" },
+  ])("initializes the expected canonical or explicitly overridden host: $expected", async ({ args, env, expected }) => {
+    const cwd = await temporaryWorkspace();
+    const result = await runSaaSFunnelsCli(["init", ...args], { cwd, env });
+    expect(result.exitCode).toBe(0);
+    const config = JSON.parse(await readFile(join(cwd, ".saasfunnels", "config.json"), "utf8"));
+    expect(config.api_base_url).toBe(expected);
+  });
+
   it.each([true, false])("reuses scoped workspace evidence without sending another catalog (current=%s)", async (currentRevision) => {
     const cwd = await temporaryWorkspace();
     const fetcher = vi.fn(async () => Response.json({ reused: true, currentRevision }));

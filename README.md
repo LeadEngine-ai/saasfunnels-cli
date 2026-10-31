@@ -48,7 +48,7 @@ approved set is reviewable.
 ### GitHub Action
 
 ```yaml
-- uses: LeadEngine-ai/saasfunnels-cli/action@v0.2.1
+- uses: LeadEngine-ai/saasfunnels-cli/action@v0.5.2
   with:
     api-key: ${{ secrets.SAASFUNNELS_API_KEY }}
     cli-version: 0.2.1 # pin it; a floating version rebaselines drift
@@ -92,9 +92,9 @@ npm run release:verify
 
 The package allowlist is enforced as `LICENSE`, `README.md`, `package.json`, the `saasfunnels` executable bundle, and the typed server-side library bundle/declarations.
 
-Documentation: https://docs.saasfunnels.ai/developer-tools/saasfunnels-cli
+Documentation: https://docs.saasfunnels.com/developer-tools/saasfunnels-cli
 
-Support: support@saasfunnels.ai
+Support: support@saasfunnels.com
 
 ### Guided application discovery
 

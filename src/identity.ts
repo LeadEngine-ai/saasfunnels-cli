@@ -1,10 +1,10 @@
 export const SAASFUNNELS_CLI_NAME = "saasfunnels";
-export const SAASFUNNELS_CLI_VERSION = "0.5.1";
+export const SAASFUNNELS_CLI_VERSION = "0.5.2";
 export const SAASFUNNELS_PRODUCT_NAME = "SaaSFunnels";
 
 // Explicit base URLs keep the same command implementation testable against
 // localhost, previews, and the controlled legacy host during cutover.
-export const SAASFUNNELS_DEFAULT_API_BASE_URL = "https://app.saasfunnels.ai";
+export const SAASFUNNELS_DEFAULT_API_BASE_URL = "https://app.saasfunnels.com";
 
 export const SAASFUNNELS_ENV = Object.freeze({
   apiBaseUrl: ["SAASFUNNELS_API_BASE_URL", "PREVENUE_API_BASE_URL"],

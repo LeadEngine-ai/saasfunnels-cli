@@ -9,7 +9,7 @@ inputs:
   api-base-url:
     description: Override for localhost or preview environments.
     required: false
-    default: https://app.saasfunnels.ai
+    default: https://app.saasfunnels.com
   catalog-file:
     description: Path to the Feature catalog manifest.
     required: false

@@ -689,7 +689,7 @@ export async function runGuidedSetup(options: Options) {
     }
     return {
       exitCode: 0,
-      stdout: `Discovery submitted. ${selection === "rejected" ? "This submission was rejected in Setup. Current findings and decisions are retained." : selection === "superseded" ? "A newer submission is selected in Setup. Current findings and decisions are retained." : selection === "complete_candidate" ? "Existing findings and decisions are retained; review proposed removals or finish the pending publication in Setup." : "Corrections are ready for review; unrelated records and saved decisions are retained."} Open https://app.saasfunnels.ai/app/setup. Configuration has not been published.\n`,
+      stdout: `Discovery submitted. ${selection === "rejected" ? "This submission was rejected in Setup. Current findings and decisions are retained." : selection === "superseded" ? "A newer submission is selected in Setup. Current findings and decisions are retained." : selection === "complete_candidate" ? "Existing findings and decisions are retained; review proposed removals or finish the pending publication in Setup." : "Corrections are ready for review; unrelated records and saved decisions are retained."} Open https://app.saasfunnels.com/app/setup. Configuration has not been published.\n`,
       stderr: "",
     };
   } catch (error) {
