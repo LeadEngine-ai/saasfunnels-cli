@@ -89,10 +89,14 @@ describe("SaaSFunnels MCP server", () => {
     ).toEqual([
       "apply_funnel_changes",
       "apply_funnel_entry",
+      "confirm_event_mapping",
       "create_funnel_draft",
       "run_funnel_binding_test",
       "submit_funnel_entry_evidence",
     ]);
+    /* Feature manifests stay key-only (features:write). */
+    expect(hosted.map((tool) => tool.name)).not.toContain("submit_feature_manifest");
+    expect(hosted.map((tool) => tool.name)).not.toContain("preview_feature_manifest");
     expect(hosted.map((tool) => tool.name)).not.toContain("send_test_event");
   });
 
@@ -353,6 +357,8 @@ describe("SaaSFunnels MCP server", () => {
       "validate_funnel_draft",
       "get_funnel_outline",
       "get_offer_catalog",
+      "propose_allowed_site",
+      "preview_feature_manifest",
     ]);
     expect(
       saasFunnelsMcpToolDefinitions({ allowFunnelWrites: true }).map(

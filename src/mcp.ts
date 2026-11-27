@@ -18,6 +18,7 @@ import {
   type AgentCapabilityId,
 } from "./capabilities.js";
 import { validateFeatureCatalogManifest } from "./feature-setup.js";
+import { saasFunnelsPlaybooks } from "./funnel-playbooks.js";
 import {
   SAASFUNNELS_CLI_VERSION,
   SAASFUNNELS_DEFAULT_API_BASE_URL,
@@ -71,6 +72,10 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_account_strategy: "account.strategy.read",
   apply_funnel_entry: "funnel.entry.apply",
   apply_funnel_changes: "funnel.draft.author",
+  confirm_event_mapping: "setup.event_mapping.confirm",
+  preview_feature_manifest: "feature.manifest.preview",
+  propose_allowed_site: "setup.allowed_site.propose",
+  submit_feature_manifest: "feature.manifest.submit",
   create_funnel_draft: "funnel.draft.create",
   get_funnel_command_schema: "funnel.draft.check",
   get_funnel_outline: "funnel.draft.check",
@@ -611,7 +616,9 @@ const hostedWorkspaceToolNames = new Set([
   "simulate_account_funnel_fit",
   "apply_funnel_changes",
   "apply_funnel_entry",
+  "confirm_event_mapping",
   "create_funnel_draft",
+  "propose_allowed_site",
   "get_funnel_command_schema",
   "get_funnel_outline",
   "get_install_status",
@@ -877,7 +884,7 @@ export function saasFunnelsMcpToolDefinitions({
     tools.push({
       annotations: readAnnotations,
       description:
-        "Read one Funnel's Results for a reporting window, including stage counts, configured acquisition aggregates, maturity, warnings, and separate revenue rows. Bounded arrays carry truncation flags.",
+        "Read one Funnel's Results for a reporting window: each step's reach, completion and drop_off in step order, Offer and action take-up, answer counts, stage counts, acquisition, maturity, warnings and revenue rows. All aggregate; bounded arrays carry truncation flags. Use it to find where a Funnel loses people.",
       inputSchema: {
         additionalProperties: false,
         properties: { funnel_id: uuidSchema, window: windowSchema },
@@ -1109,6 +1116,38 @@ export function saasFunnelsMcpToolDefinitions({
       name: "get_offer_catalog",
       title: "Get Offer Catalog",
     },
+    {
+      annotations: readOnly,
+      description:
+        "Check whether a site may load the SaaSFunnels snippet. If not, returns approve_url: a Settings link that opens the sites editor with the site added for a workspace admin to save. Nothing changes until they do.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          site: { description: "Site address, such as https://www.example.com.", type: "string" },
+        },
+        required: ["site"],
+        type: "object",
+      },
+      name: "propose_allowed_site",
+      title: "Propose Allowed Site",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Compare a candidate Feature instrumentation manifest (scanRole candidate) with the saved baseline and list the drift, without saving it. Needs an API key with features:write.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          manifest: { description: "Feature instrumentation manifest, schemaVersion 2. Never include source code.", type: "object" },
+        },
+        required: ["manifest"],
+        type: "object",
+      },
+      name: "preview_feature_manifest",
+      title: "Preview Feature Manifest",
+    },
   );
 
   if (allowFunnelWrites) {
@@ -1166,6 +1205,52 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "apply_funnel_changes",
         title: "Apply Funnel Changes",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Save how an event this app sends is read, as Settings → Data does: confirmed (the default), ignored or needs_review, with its category. Undo by saving it again as needs_review.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            api_base_url: apiBaseUrlSchema,
+            event_kind: { type: "string" },
+            raw_event_name: { description: "The event name exactly as sent.", type: "string" },
+            semantic_type: { description: "Event category; an invalid one returns the allowed list.", type: "string" },
+            source: { enum: ["direct", "direct_api", "web_sdk", "posthog", "segment", "customerio", "csv", "stripe"], type: "string" },
+            status: { enum: ["confirmed", "ignored", "needs_review"], type: "string" },
+          },
+          required: ["source", "raw_event_name", "semantic_type"],
+          type: "object",
+        },
+        name: "confirm_event_mapping",
+        title: "Confirm Event Mapping",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Submit a reviewed Feature instrumentation manifest (scanRole series) after preview_feature_manifest. New Features wait for the merchant's review in Catalog. Needs an API key with features:write; never include source code.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            api_base_url: apiBaseUrlSchema,
+            manifest: { type: "object" },
+          },
+          required: ["manifest"],
+          type: "object",
+        },
+        name: "submit_feature_manifest",
+        title: "Submit Feature Manifest",
       },
     );
   }
@@ -1804,6 +1889,66 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     }
+    if (name === "propose_allowed_site") {
+      const site = stringArg(args, "site");
+      if (!site || site.length > 300) throw new McpProtocolError(-32602, "site is required.");
+      return structuredToolResult(
+        await developerGet(`/api/developer-tools/setup/allowed-sites?site=${encodeURIComponent(site)}`, args, options),
+      );
+    }
+    if (name === "preview_feature_manifest")
+      return structuredToolResult(
+        await developerPost(
+          "/api/developer-tools/features/instrumentation/preview",
+          args,
+          objectArg(args, "manifest"),
+          options,
+          "features:write",
+        ),
+      );
+    if (name === "confirm_event_mapping" || name === "submit_feature_manifest") {
+      if (!options.allowFunnelWrites) {
+        throw new McpToolExecutionError("Setup writes are disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-writes or SAASFUNNELS_MCP_ENABLE_FUNNEL_WRITES=true.",
+          error: "Setup writes are disabled by default.",
+          ok: false,
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      }
+      if (name === "submit_feature_manifest")
+        return structuredToolResult(
+          await developerPost(
+            "/api/developer-tools/features/instrumentation",
+            args,
+            objectArg(args, "manifest"),
+            options,
+            "features:write",
+          ),
+        );
+      const source = stringArg(args, "source");
+      const rawEventName = stringArg(args, "raw_event_name");
+      const semanticType = stringArg(args, "semantic_type");
+      if (!source || !rawEventName || !semanticType)
+        throw new McpProtocolError(-32602, "source, raw_event_name and semantic_type are required.");
+      const status = stringArg(args, "status");
+      const eventKind = stringArg(args, "event_kind");
+      return structuredToolResult(
+        await developerPost(
+          "/api/developer-tools/mappings/confirm",
+          args,
+          {
+            raw_event_name: rawEventName,
+            semantic_type: semanticType,
+            source,
+            ...(status ? { status } : {}),
+            ...(eventKind ? { event_kind: eventKind } : {}),
+          },
+          options,
+          "funnels:author",
+        ),
+      );
+    }
     if (name === "list_funnel_templates")
       return structuredToolResult(
         await developerGet("/api/developer-tools/funnels/templates", args, options),
@@ -2025,6 +2170,37 @@ export async function callSaaSFunnelsMcpTool(
   throw new McpProtocolError(-32602, `Unknown tool "${name}".`);
 }
 
+/** The playbooks as MCP prompts (LEA-2263). */
+export function saasFunnelsMcpPrompts() {
+  return saasFunnelsPlaybooks.map((playbook) => ({
+    arguments: playbook.arguments,
+    description: playbook.description,
+    name: playbook.name,
+    title: playbook.title,
+  }));
+}
+
+export function getSaaSFunnelsMcpPrompt(name: string, args: JsonObject) {
+  const playbook = saasFunnelsPlaybooks.find((candidate) => candidate.name === name);
+  if (!playbook) throw new McpProtocolError(-32602, `Unknown prompt "${name}".`);
+  const values: Record<string, string | undefined> = {};
+  for (const argument of playbook.arguments) {
+    const value = args[argument.name];
+    if (argument.required && (typeof value !== "string" || !value.trim()))
+      throw new McpProtocolError(-32602, `${argument.name} is required.`);
+    values[argument.name] = typeof value === "string" ? value.slice(0, 2_000) : undefined;
+  }
+  return {
+    description: playbook.description,
+    messages: [
+      {
+        content: { text: playbook.render(values), type: "text" },
+        role: "user",
+      },
+    ],
+  };
+}
+
 export async function handleSaaSFunnelsMcpMessage(
   message: unknown,
   options: SaaSFunnelsMcpOptions = {},
@@ -2042,13 +2218,14 @@ export async function handleSaaSFunnelsMcpMessage(
     if (request.method === "initialize") {
       return successResponse(id, {
         capabilities: {
+          prompts: {},
           resources: {},
           tools: {
             listChanged: false,
           },
         },
         instructions:
-          "Use SaaSFunnels MCP to validate revenue event payloads, inspect and plan Funnel entries, read setup/readiness context, and generate coding-agent handoffs. Live reads require SAASFUNNELS_API_KEY with developer:read scope. Versioned Funnel draft writes require explicit enablement and funnels:author scope; MCP cannot publish. Setup smoke sends require explicit enablement and SAASFUNNELS_INGEST_API_KEY.",
+          "Use SaaSFunnels MCP to build, wire up and test Funnels in this app: start with list_funnel_templates and create_funnel_draft, edit with apply_funnel_changes, check with get_launch_checklist and validate_funnel_draft, and hand the merchant the Studio link to publish. The prompts list has step-by-step playbooks. It also validates revenue event payloads, plans Funnel entries and reads setup/readiness context. Live reads require SAASFUNNELS_API_KEY with developer:read scope. Versioned Funnel draft writes require explicit enablement and funnels:author scope; MCP cannot publish. Setup smoke sends require explicit enablement and SAASFUNNELS_INGEST_API_KEY.",
         protocolVersion: mcpProtocolVersion,
         serverInfo: {
           name: SAASFUNNELS_PRODUCT_NAME.toLowerCase(),
@@ -2059,6 +2236,18 @@ export async function handleSaaSFunnelsMcpMessage(
     }
 
     if (request.method === "ping") return successResponse(id, {});
+
+    if (request.method === "prompts/list") {
+      return successResponse(id, { prompts: saasFunnelsMcpPrompts() });
+    }
+
+    if (request.method === "prompts/get") {
+      const params = parseArgs(request.params);
+      return successResponse(
+        id,
+        getSaaSFunnelsMcpPrompt(stringArg(params, "name") ?? "", parseArgs(params.arguments)),
+      );
+    }
 
     if (request.method === "resources/list") {
       return successResponse(id, {

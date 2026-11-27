@@ -5,11 +5,19 @@ export {
 } from "./check-summary.js";
 
 export {
+  funnelPlaybookFile,
+  saasFunnelsPlaybooks,
+  type SaaSFunnelsPlaybook,
+} from "./funnel-playbooks.js";
+
+export {
   callSaaSFunnelsMcpTool,
+  getSaaSFunnelsMcpPrompt,
   handleSaaSFunnelsMcpMessage,
   hostedSaaSFunnelsMcpToolDefinitions,
   readSaaSFunnelsMcpResource,
   saasFunnelsMcpCapabilityForTool,
+  saasFunnelsMcpPrompts,
   saasFunnelsMcpResources,
   saasFunnelsMcpToolCapabilityIds,
   saasFunnelsMcpToolDefinitions,

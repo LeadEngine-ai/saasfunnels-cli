@@ -44,6 +44,7 @@ import {
   writeApprovedPlanSources,
 } from "./plan-sources.js";
 import { serveSaaSFunnelsMcp } from "./mcp.js";
+import { funnelPlaybookFile } from "./funnel-playbooks.js";
 
 type CliEnv = Record<string, string | undefined>;
 
@@ -342,17 +343,27 @@ async function commandAgentInstall(
     saasFunnelsPublicText(artifact.file_contents),
     "utf8",
   );
+  /* The Funnel playbooks (LEA-2263): a skill or rules file the agent reads
+     when asked to add, change or improve a Funnel. */
+  const playbook = funnelPlaybookFile(target as Parameters<typeof funnelPlaybookFile>[0]);
+  const playbookTarget = join(cwd(options), playbook.path);
+  await fs.mkdir(dirname(playbookTarget), { recursive: true });
+  await fs.writeFile(playbookTarget, playbook.contents, "utf8");
 
   if (jsonMode(flags)) {
     return jsonResult(0, {
       ok: true,
+      playbook_path: playbook.path,
       target,
       target_path: targetPath,
       version: artifact.version,
     });
   }
 
-  return result(0, `Installed ${artifact.label} handoff at ${targetPath}\n`);
+  return result(
+    0,
+    `Installed ${artifact.label} handoff at ${targetPath}\nInstalled Funnel playbooks at ${playbook.path}\n`,
+  );
 }
 
 async function commandEvents(

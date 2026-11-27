@@ -148,6 +148,14 @@ describe("SaaSFunnels CLI", () => {
     expect(artifact).toContain("<SAASFUNNELS_INGEST_KEY>");
     expect(artifact).toContain("SaaSFunnels Event Discovery");
     expect(artifact).not.toContain("PREVENUE_");
+    /* The Funnel playbooks sit beside it as their own skill (LEA-2263). */
+    const playbook = await readFile(
+      join(cwd, ".agents/skills/saasfunnels-funnels/SKILL.md"),
+      "utf8",
+    );
+    expect(playbook).toContain("name: saasfunnels-funnels");
+    expect(playbook).toContain("## Add a cancellation save flow");
+    expect(playbook).toContain("apply_funnel_changes");
   });
 
   it("accepts the documented legacy environment aliases without emitting them", async () => {

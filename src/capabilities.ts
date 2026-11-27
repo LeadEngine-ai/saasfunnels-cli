@@ -5,6 +5,8 @@ export type AgentCapabilityId =
   | "developer.feature_manifest.validate"
   | "developer.handoff.generate"
   | "developer.workspace.read"
+  | "feature.manifest.preview"
+  | "feature.manifest.submit"
   | "funnel.draft.author"
   | "funnel.draft.check"
   | "funnel.draft.create"
@@ -15,6 +17,8 @@ export type AgentCapabilityId =
   | "funnel.entry.test"
   | "funnel.offers.read"
   | "funnel.workspace.read"
+  | "setup.allowed_site.propose"
+  | "setup.event_mapping.confirm"
   | "setup.test_event.send";
 
 type AgentExecutionBoundary =
@@ -138,6 +142,29 @@ const registry: Readonly<Record<AgentCapabilityId, Capability>> = Object.freeze(
   ]),
   "funnel.workspace.read": capability("funnel.workspace.read", "read", [
     "in_app",
+    "hosted_mcp",
+  ]),
+  "feature.manifest.preview": capability("feature.manifest.preview", "validate", [
+    "local_cli",
+    "local_mcp",
+    "api_key",
+  ]),
+  "feature.manifest.submit": capability("feature.manifest.submit", "reversible_write", [
+    "local_cli",
+    "local_mcp",
+    "api_key",
+  ]),
+  "setup.allowed_site.propose": capability("setup.allowed_site.propose", "prepare", [
+    "in_app",
+    "local_cli",
+    "local_mcp",
+    "api_key",
+    "hosted_mcp",
+  ]),
+  "setup.event_mapping.confirm": capability("setup.event_mapping.confirm", "reversible_write", [
+    "in_app",
+    "local_mcp",
+    "api_key",
     "hosted_mcp",
   ]),
   "setup.test_event.send": capability("setup.test_event.send", "external_write", [

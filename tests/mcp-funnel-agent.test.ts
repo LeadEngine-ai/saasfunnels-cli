@@ -105,3 +105,68 @@ describe("Funnel agent tools (LEA-2258, LEA-2259)", () => {
     expect(calls).toHaveLength(2);
   });
 });
+
+describe("Funnel playbooks and setup tools (LEA-2260, LEA-2263)", () => {
+  it("lists and renders the playbooks as MCP prompts", async () => {
+    const { handleSaaSFunnelsMcpMessage } = await import("../src/mcp.js");
+    const list = await handleSaaSFunnelsMcpMessage({ id: 1, jsonrpc: "2.0", method: "prompts/list" });
+    const names = ((list?.result as { prompts: Array<{ name: string }> }).prompts).map((prompt) => prompt.name);
+    expect(names).toEqual([
+      "launch_funnel",
+      "add_cancellation_flow",
+      "recover_failed_payments",
+      "edit_funnel",
+      "improve_funnel",
+    ]);
+    const prompt = await handleSaaSFunnelsMcpMessage({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "prompts/get",
+      params: { arguments: {}, name: "add_cancellation_flow" },
+    });
+    const text = (prompt?.result as { messages: Array<{ content: { text: string } }> }).messages[0]!.content.text;
+    expect(text).toContain("cancellation_save");
+    expect(text).toContain("create_funnel_draft");
+    expect(text).toContain("Never try to publish");
+    const missing = await handleSaaSFunnelsMcpMessage({
+      id: 3,
+      jsonrpc: "2.0",
+      method: "prompts/get",
+      params: { arguments: {}, name: "edit_funnel" },
+    });
+    expect(missing?.error?.message).toBe("funnel_id is required.");
+  });
+
+  it("proposes sites read-only and keeps mapping writes behind enablement", async () => {
+    const { calls, fetchImpl } = recorder();
+    const base = {
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      env: { SAASFUNNELS_API_KEY: "sf_test_key_value" },
+      fetch: fetchImpl,
+    };
+    await callSaaSFunnelsMcpTool("propose_allowed_site", { site: "www.example.com" }, base);
+    const refused = await callSaaSFunnelsMcpTool(
+      "confirm_event_mapping",
+      { raw_event_name: "plan_upgraded", semantic_type: "upgrade", source: "web_sdk" },
+      base,
+    );
+    expect(refused.isError).toBe(true);
+    await callSaaSFunnelsMcpTool(
+      "confirm_event_mapping",
+      { raw_event_name: "plan_upgraded", semantic_type: "upgrade", source: "web_sdk" },
+      { ...base, allowFunnelWrites: true },
+    );
+    expect(calls).toEqual([
+      {
+        body: undefined,
+        method: "GET",
+        url: "https://app.saasfunnels.test/api/developer-tools/setup/allowed-sites?site=www.example.com",
+      },
+      {
+        body: { raw_event_name: "plan_upgraded", semantic_type: "upgrade", source: "web_sdk" },
+        method: "POST",
+        url: "https://app.saasfunnels.test/api/developer-tools/mappings/confirm",
+      },
+    ]);
+  });
+});
