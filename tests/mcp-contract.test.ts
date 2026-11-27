@@ -78,7 +78,22 @@ describe("SaaSFunnels MCP server", () => {
       }
     }
     expect((hosted.find((tool) => tool.name === "list_workspaces")!.inputSchema.properties as any).workspace_id).toBeUndefined();
-    expect(hosted.some((tool) => tool.annotations?.readOnlyHint === false)).toBe(false);
+    /* Hosted clients see the draft-editing tools; the server refuses them
+       unless the workspace allows agent editing (LEA-2258). Nothing hosted
+       sends events, publishes or deletes. */
+    expect(
+      hosted
+        .filter((tool) => tool.annotations?.readOnlyHint === false)
+        .map((tool) => tool.name)
+        .sort(),
+    ).toEqual([
+      "apply_funnel_changes",
+      "apply_funnel_entry",
+      "create_funnel_draft",
+      "run_funnel_binding_test",
+      "submit_funnel_entry_evidence",
+    ]);
+    expect(hosted.map((tool) => tool.name)).not.toContain("send_test_event");
   });
 
   it("discovers hosted workspaces and forwards an explicit workspace ID for live calls", async () => {
@@ -331,7 +346,21 @@ describe("SaaSFunnels MCP server", () => {
       "get_signal_payload_preview",
       "inspect_funnel_entry",
       "propose_funnel_entry_installation",
+      "list_funnel_templates",
+      "get_launch_checklist",
+      "get_install_status",
+      "get_funnel_command_schema",
+      "validate_funnel_draft",
+      "get_funnel_outline",
+      "get_offer_catalog",
     ]);
+    expect(
+      saasFunnelsMcpToolDefinitions({ allowFunnelWrites: true }).map(
+        (tool) => tool.name,
+      ),
+    ).toEqual(
+      expect.arrayContaining(["create_funnel_draft", "apply_funnel_changes"]),
+    );
     expect(
       saasFunnelsMcpToolDefinitions({ allowTestWrites: true }).map(
         (tool) => tool.name,
