@@ -5,12 +5,20 @@ export type AgentCapabilityId =
   | "developer.feature_manifest.validate"
   | "developer.handoff.generate"
   | "developer.workspace.read"
+  | "feature.manifest.preview"
+  | "feature.manifest.submit"
+  | "funnel.draft.author"
+  | "funnel.draft.check"
+  | "funnel.draft.create"
   | "funnel.entry.apply"
   | "funnel.entry.evidence.submit"
   | "funnel.entry.inspect"
   | "funnel.entry.plan"
   | "funnel.entry.test"
+  | "funnel.offers.read"
   | "funnel.workspace.read"
+  | "setup.allowed_site.propose"
+  | "setup.event_mapping.confirm"
   | "setup.test_event.send";
 
 type AgentExecutionBoundary =
@@ -74,16 +82,36 @@ const registry: Readonly<Record<AgentCapabilityId, Capability>> = Object.freeze(
     "api_key",
     "hosted_mcp",
   ]),
+  "funnel.draft.author": capability("funnel.draft.author", "reversible_write", [
+    "in_app",
+    "local_mcp",
+    "api_key",
+    "hosted_mcp",
+  ]),
+  "funnel.draft.check": capability("funnel.draft.check", "validate", [
+    "in_app",
+    "local_cli",
+    "local_mcp",
+    "api_key",
+    "hosted_mcp",
+  ]),
+  "funnel.draft.create": capability("funnel.draft.create", "reversible_write", [
+    "in_app",
+    "local_mcp",
+    "api_key",
+    "hosted_mcp",
+  ]),
   "funnel.entry.apply": capability("funnel.entry.apply", "reversible_write", [
     "in_app",
     "local_cli",
     "local_mcp",
     "api_key",
+    "hosted_mcp",
   ]),
   "funnel.entry.evidence.submit": capability(
     "funnel.entry.evidence.submit",
     "reversible_write",
-    ["in_app", "local_cli", "local_mcp", "api_key"],
+    ["in_app", "local_cli", "local_mcp", "api_key", "hosted_mcp"],
   ),
   "funnel.entry.inspect": capability("funnel.entry.inspect", "read", [
     "in_app",
@@ -103,9 +131,40 @@ const registry: Readonly<Record<AgentCapabilityId, Capability>> = Object.freeze(
     "local_cli",
     "local_mcp",
     "api_key",
+    "hosted_mcp",
+  ]),
+  "funnel.offers.read": capability("funnel.offers.read", "read", [
+    "in_app",
+    "local_cli",
+    "local_mcp",
+    "api_key",
+    "hosted_mcp",
   ]),
   "funnel.workspace.read": capability("funnel.workspace.read", "read", [
     "in_app",
+    "hosted_mcp",
+  ]),
+  "feature.manifest.preview": capability("feature.manifest.preview", "validate", [
+    "local_cli",
+    "local_mcp",
+    "api_key",
+  ]),
+  "feature.manifest.submit": capability("feature.manifest.submit", "reversible_write", [
+    "local_cli",
+    "local_mcp",
+    "api_key",
+  ]),
+  "setup.allowed_site.propose": capability("setup.allowed_site.propose", "prepare", [
+    "in_app",
+    "local_cli",
+    "local_mcp",
+    "api_key",
+    "hosted_mcp",
+  ]),
+  "setup.event_mapping.confirm": capability("setup.event_mapping.confirm", "reversible_write", [
+    "in_app",
+    "local_mcp",
+    "api_key",
     "hosted_mcp",
   ]),
   "setup.test_event.send": capability("setup.test_event.send", "external_write", [
@@ -138,8 +197,11 @@ export function agentCapabilityAllowedAtBoundary(
 ) {
   const selected = registry[id];
   if (!selected.enabled || !selected.boundaries.includes(boundary)) return false;
-  if (boundary === "hosted_mcp" && !hostedOperationClasses.has(selected.operationClass)) {
-    return false;
+  if (boundary === "hosted_mcp") {
+    if (hostedOperationClasses.has(selected.operationClass)) return true;
+    /* Hosted agents edit drafts only, where the workspace allows it. The
+       server re-checks the workspace and role on every call. */
+    return selected.operationClass === "reversible_write" && mutationsEnabled;
   }
   if (
     ["api_key", "local_cli", "local_mcp"].includes(boundary) &&

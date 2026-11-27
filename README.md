@@ -48,7 +48,7 @@ approved set is reviewable.
 ### GitHub Action
 
 ```yaml
-- uses: LeadEngine-ai/saasfunnels-cli/action@v0.5.2
+- uses: LeadEngine-ai/saasfunnels-cli/action@v0.6.0
   with:
     api-key: ${{ secrets.SAASFUNNELS_API_KEY }}
     cli-version: 0.2.1 # pin it; a floating version rebaselines drift

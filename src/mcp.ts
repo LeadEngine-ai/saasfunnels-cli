@@ -18,6 +18,7 @@ import {
   type AgentCapabilityId,
 } from "./capabilities.js";
 import { validateFeatureCatalogManifest } from "./feature-setup.js";
+import { saasFunnelsPlaybooks } from "./funnel-playbooks.js";
 import {
   SAASFUNNELS_CLI_VERSION,
   SAASFUNNELS_DEFAULT_API_BASE_URL,
@@ -70,6 +71,19 @@ type McpResourceDefinition = SaaSFunnelsMcpResourceDefinition;
 export const saasFunnelsMcpToolCapabilityIds = {
   get_account_strategy: "account.strategy.read",
   apply_funnel_entry: "funnel.entry.apply",
+  apply_funnel_changes: "funnel.draft.author",
+  confirm_event_mapping: "setup.event_mapping.confirm",
+  preview_feature_manifest: "feature.manifest.preview",
+  propose_allowed_site: "setup.allowed_site.propose",
+  submit_feature_manifest: "feature.manifest.submit",
+  create_funnel_draft: "funnel.draft.create",
+  get_funnel_command_schema: "funnel.draft.check",
+  get_funnel_outline: "funnel.draft.check",
+  get_install_status: "developer.workspace.read",
+  get_launch_checklist: "funnel.draft.check",
+  get_offer_catalog: "funnel.offers.read",
+  list_funnel_templates: "developer.workspace.read",
+  validate_funnel_draft: "funnel.draft.check",
   generate_direct_api_handoff: "developer.handoff.generate",
   get_integration_health: "developer.workspace.read",
   get_funnel_results: "funnel.workspace.read",
@@ -600,6 +614,20 @@ const hostedWorkspaceToolNames = new Set([
   "propose_funnel_entry_installation",
   "get_account_strategy",
   "simulate_account_funnel_fit",
+  "apply_funnel_changes",
+  "apply_funnel_entry",
+  "confirm_event_mapping",
+  "create_funnel_draft",
+  "propose_allowed_site",
+  "get_funnel_command_schema",
+  "get_funnel_outline",
+  "get_install_status",
+  "get_launch_checklist",
+  "get_offer_catalog",
+  "list_funnel_templates",
+  "run_funnel_binding_test",
+  "submit_funnel_entry_evidence",
+  "validate_funnel_draft",
 ]);
 
 function developerPathForWorkspace(
@@ -856,7 +884,7 @@ export function saasFunnelsMcpToolDefinitions({
     tools.push({
       annotations: readAnnotations,
       description:
-        "Read one Funnel's Results for a reporting window, including stage counts, configured acquisition aggregates, maturity, warnings, and separate revenue rows. Bounded arrays carry truncation flags.",
+        "Read one Funnel's Results for a reporting window: each step's reach, completion and drop_off in step order, Offer and action take-up, answer counts, stage counts, acquisition, maturity, warnings and revenue rows. All aggregate; bounded arrays carry truncation flags. Use it to find where a Funnel loses people.",
       inputSchema: {
         additionalProperties: false,
         properties: { funnel_id: uuidSchema, window: windowSchema },
@@ -1007,6 +1035,226 @@ export function saasFunnelsMcpToolDefinitions({
     });
   }
 
+  const readOnly = {
+    idempotentHint: true,
+    openWorldHint: true,
+    readOnlyHint: true,
+  };
+  const funnelIdInput = (description: string) => ({
+    additionalProperties: false,
+    properties: {
+      api_base_url: apiBaseUrlSchema,
+      funnel_id: { description, type: "string" },
+    },
+    required: ["funnel_id"],
+    type: "object",
+  });
+  tools.push(
+    {
+      annotations: readOnly,
+      description:
+        "List the templates a new Funnel can start from (cancellation save, trial conversion, plan selection and more) with what each needs, plus the workspace's published Features a template can respond to. Start here when asked to set up a Funnel.",
+      inputSchema: emptyLiveInputSchema(),
+      name: "list_funnel_templates",
+      title: "List Funnel Templates",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "What still stands between a Funnel draft and Publish: publish blockers, readiness checks with fix links, the entry's install and Test state, and the Studio link. Publishing itself happens in Studio.",
+      inputSchema: funnelIdInput("Funnel ID from list_funnels or create_funnel_draft."),
+      name: "get_launch_checklist",
+      title: "Get Launch Checklist",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Whether the SaaSFunnels snippet has been seen on the site or app, when and where, and which sites each install code accepts. Use it after installing the SDK to confirm it loads.",
+      inputSchema: emptyLiveInputSchema(),
+      name: "get_install_status",
+      title: "Get Install Status",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "List the edit commands apply_funnel_changes accepts, or pass type to get one command's JSON Schema. The server fills in command IDs and revisions.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          type: {
+            description: "A command type from the list, such as set_step or compose_steps.",
+            type: "string",
+          },
+        },
+        type: "object",
+      },
+      name: "get_funnel_command_schema",
+      title: "Get Funnel Command Schema",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Problems in a Funnel draft you can fix: what blocks publishing, what is worth a look, and text that would be hard to read. Run it after editing.",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "validate_funnel_draft",
+      title: "Validate Funnel Draft",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "What customers see in a Funnel draft, step by step, as text: each step's elements, buttons and where every button and answer leads. Use it to check your edits without a browser.",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "get_funnel_outline",
+      title: "Get Funnel Outline",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "The workspace's published plans, prices and discounts a Funnel Offer can use, with the plan map to reference in Offer strategies. New discounts are prepared in a draft and created in Studio.",
+      inputSchema: emptyLiveInputSchema(),
+      name: "get_offer_catalog",
+      title: "Get Offer Catalog",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Check whether a site may load the SaaSFunnels snippet. If not, returns approve_url: a Settings link that opens the sites editor with the site added for a workspace admin to save. Nothing changes until they do.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          site: { description: "Site address, such as https://www.example.com.", type: "string" },
+        },
+        required: ["site"],
+        type: "object",
+      },
+      name: "propose_allowed_site",
+      title: "Propose Allowed Site",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Compare a candidate Feature instrumentation manifest (scanRole candidate) with the saved baseline and list the drift, without saving it. Needs an API key with features:write.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          manifest: { description: "Feature instrumentation manifest, schemaVersion 2. Never include source code.", type: "object" },
+        },
+        required: ["manifest"],
+        type: "object",
+      },
+      name: "preview_feature_manifest",
+      title: "Preview Feature Manifest",
+    },
+  );
+
+  if (allowFunnelWrites) {
+    tools.push(
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Create an unpublished Funnel draft from a template (template_key from list_funnel_templates, plus feature_key when the template needs a Feature) or blank. Reusing request_key reopens the same draft. Never publishes.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            api_base_url: apiBaseUrlSchema,
+            feature_key: { description: "Published Feature key when the template needs one.", type: "string" },
+            request_key: { description: "A new random UUID v4; reuse it to retry safely.", type: "string" },
+            template_key: { description: "Template key; omit to start blank.", type: "string" },
+          },
+          required: ["request_key"],
+          type: "object",
+        },
+        name: "create_funnel_draft",
+        title: "Create Funnel Draft",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Apply up to 16 edit commands to a Funnel draft as one batch: all are checked first and nothing saves if any is refused. Get command shapes from get_funnel_command_schema and the current revision from get_funnel_state. The merchant sees the batch in Studio and can undo it there. Never publishes or deletes.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            agent_name: { description: "Your name as the merchant should see it, such as Claude Code.", type: "string" },
+            api_base_url: apiBaseUrlSchema,
+            batch_id: { description: "Optional 6–24 lowercase letters/digits; reuse it to retry the same batch safely.", type: "string" },
+            changes: {
+              description: "Edit commands, each with its type and fields but without commandId or revisions.",
+              items: { type: "object" },
+              maxItems: 16,
+              minItems: 1,
+              type: "array",
+            },
+            expected_draft_revision: { minimum: 0, type: "integer" },
+            funnel_id: { type: "string" },
+          },
+          required: ["funnel_id", "expected_draft_revision", "changes"],
+          type: "object",
+        },
+        name: "apply_funnel_changes",
+        title: "Apply Funnel Changes",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Save how an event this app sends is read, as Settings → Data does: confirmed (the default), ignored or needs_review, with its category. Undo by saving it again as needs_review.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            api_base_url: apiBaseUrlSchema,
+            event_kind: { type: "string" },
+            raw_event_name: { description: "The event name exactly as sent.", type: "string" },
+            semantic_type: { description: "Event category; an invalid one returns the allowed list.", type: "string" },
+            source: { enum: ["direct", "direct_api", "web_sdk", "posthog", "segment", "customerio", "csv", "stripe"], type: "string" },
+            status: { enum: ["confirmed", "ignored", "needs_review"], type: "string" },
+          },
+          required: ["source", "raw_event_name", "semantic_type"],
+          type: "object",
+        },
+        name: "confirm_event_mapping",
+        title: "Confirm Event Mapping",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Submit a reviewed Feature instrumentation manifest (scanRole series) after preview_feature_manifest. New Features wait for the merchant's review in Catalog. Needs an API key with features:write; never include source code.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            api_base_url: apiBaseUrlSchema,
+            manifest: { type: "object" },
+          },
+          required: ["manifest"],
+          type: "object",
+        },
+        name: "submit_feature_manifest",
+        title: "Submit Feature Manifest",
+      },
+    );
+  }
+
   if (allowFunnelWrites) {
     tools.push({
       annotations: {
@@ -1143,11 +1391,20 @@ export function saasFunnelsMcpToolDefinitions({
 }
 
 export function hostedSaaSFunnelsMcpToolDefinitions() {
-  const tools = saasFunnelsMcpToolDefinitions({ includeHostedAccountTools: true }).filter((tool) => {
+  /* Draft-editing tools are listed for every hosted client; the server
+     refuses them per call unless the workspace allows agent editing and the
+     person is an owner or admin. Smoke event sends stay key-only. */
+  const tools = saasFunnelsMcpToolDefinitions({
+    allowFunnelTests: true,
+    allowFunnelWrites: true,
+    includeHostedAccountTools: true,
+  }).filter((tool) => {
     const capability = saasFunnelsMcpCapabilityForTool(tool.name);
     return Boolean(
       capability &&
-      agentCapabilityAllowedAtBoundary(capability.id, "hosted_mcp"),
+      agentCapabilityAllowedAtBoundary(capability.id, "hosted_mcp", {
+        mutationsEnabled: tool.annotations?.readOnlyHint === false,
+      }),
     );
   });
   for (const tool of tools) {
@@ -1632,6 +1889,173 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     }
+    if (name === "propose_allowed_site") {
+      const site = stringArg(args, "site");
+      if (!site || site.length > 300) throw new McpProtocolError(-32602, "site is required.");
+      return structuredToolResult(
+        await developerGet(`/api/developer-tools/setup/allowed-sites?site=${encodeURIComponent(site)}`, args, options),
+      );
+    }
+    if (name === "preview_feature_manifest")
+      return structuredToolResult(
+        await developerPost(
+          "/api/developer-tools/features/instrumentation/preview",
+          args,
+          objectArg(args, "manifest"),
+          options,
+          "features:write",
+        ),
+      );
+    if (name === "confirm_event_mapping" || name === "submit_feature_manifest") {
+      if (!options.allowFunnelWrites) {
+        throw new McpToolExecutionError("Setup writes are disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-writes or SAASFUNNELS_MCP_ENABLE_FUNNEL_WRITES=true.",
+          error: "Setup writes are disabled by default.",
+          ok: false,
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      }
+      if (name === "submit_feature_manifest")
+        return structuredToolResult(
+          await developerPost(
+            "/api/developer-tools/features/instrumentation",
+            args,
+            objectArg(args, "manifest"),
+            options,
+            "features:write",
+          ),
+        );
+      const source = stringArg(args, "source");
+      const rawEventName = stringArg(args, "raw_event_name");
+      const semanticType = stringArg(args, "semantic_type");
+      if (!source || !rawEventName || !semanticType)
+        throw new McpProtocolError(-32602, "source, raw_event_name and semantic_type are required.");
+      const status = stringArg(args, "status");
+      const eventKind = stringArg(args, "event_kind");
+      return structuredToolResult(
+        await developerPost(
+          "/api/developer-tools/mappings/confirm",
+          args,
+          {
+            raw_event_name: rawEventName,
+            semantic_type: semanticType,
+            source,
+            ...(status ? { status } : {}),
+            ...(eventKind ? { event_kind: eventKind } : {}),
+          },
+          options,
+          "funnels:author",
+        ),
+      );
+    }
+    if (name === "list_funnel_templates")
+      return structuredToolResult(
+        await developerGet("/api/developer-tools/funnels/templates", args, options),
+      );
+    if (name === "get_install_status")
+      return structuredToolResult(
+        await developerGet("/api/developer-tools/setup/install-status", args, options),
+      );
+    if (name === "get_offer_catalog")
+      return structuredToolResult(
+        await developerGet("/api/developer-tools/offers", args, options),
+      );
+    if (name === "get_funnel_command_schema") {
+      const type = stringArg(args, "type");
+      if (type && !/^[a-z_]{1,60}$/.test(type)) {
+        throw new McpProtocolError(-32602, "type must be a command type such as set_step.");
+      }
+      return structuredToolResult(
+        await developerGet(
+          `/api/developer-tools/funnels/command-schema${type ? `?type=${encodeURIComponent(type)}` : ""}`,
+          args,
+          options,
+        ),
+      );
+    }
+    if (
+      name === "get_launch_checklist" ||
+      name === "validate_funnel_draft" ||
+      name === "get_funnel_outline"
+    ) {
+      const funnelId = uuidArg(args, "funnel_id", true);
+      const resource =
+        name === "get_launch_checklist"
+          ? "checklist"
+          : name === "validate_funnel_draft"
+            ? "validation"
+            : "outline";
+      return structuredToolResult(
+        await developerGet(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${resource}`,
+          args,
+          options,
+        ),
+      );
+    }
+    if (name === "create_funnel_draft" || name === "apply_funnel_changes") {
+      if (!options.allowFunnelWrites) {
+        throw new McpToolExecutionError("Funnel draft writes are disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-writes or SAASFUNNELS_MCP_ENABLE_FUNNEL_WRITES=true.",
+          error: "Funnel draft writes are disabled by default.",
+          ok: false,
+          required_scope: "funnels:author",
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      }
+      if (name === "create_funnel_draft") {
+        const requestKey = uuidArg(args, "request_key", true);
+        const templateKey = stringArg(args, "template_key");
+        const featureKey = stringArg(args, "feature_key");
+        return structuredToolResult(
+          await developerPost(
+            "/api/developer-tools/funnels",
+            args,
+            {
+              request_key: requestKey,
+              ...(templateKey ? { template_key: templateKey } : {}),
+              ...(featureKey ? { feature_key: featureKey } : {}),
+            },
+            options,
+            "funnels:author",
+          ),
+        );
+      }
+      const funnelId = uuidArg(args, "funnel_id", true);
+      const expectedDraftRevision = args.expected_draft_revision;
+      const changes = args.changes;
+      if (
+        !Number.isInteger(expectedDraftRevision) ||
+        Number(expectedDraftRevision) < 0 ||
+        !Array.isArray(changes) ||
+        changes.length < 1 ||
+        changes.length > 16 ||
+        changes.some((change) => !change || typeof change !== "object" || Array.isArray(change))
+      ) {
+        throw new McpProtocolError(
+          -32602,
+          "funnel_id, expected_draft_revision and 1–16 change objects are required.",
+        );
+      }
+      const agentName = stringArg(args, "agent_name");
+      const batchId = stringArg(args, "batch_id");
+      return structuredToolResult(
+        await developerPost(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/changes`,
+          args,
+          {
+            changes,
+            expected_draft_revision: expectedDraftRevision,
+            ...(agentName ? { agent_name: agentName.slice(0, 60) } : {}),
+            ...(batchId ? { batch_id: batchId } : {}),
+          },
+          options,
+          "funnels:author",
+        ),
+      );
+    }
     if (name === "apply_funnel_entry") {
       if (!options.allowFunnelWrites) {
         throw new McpToolExecutionError("Funnel draft writes are disabled.", {
@@ -1746,6 +2170,37 @@ export async function callSaaSFunnelsMcpTool(
   throw new McpProtocolError(-32602, `Unknown tool "${name}".`);
 }
 
+/** The playbooks as MCP prompts (LEA-2263). */
+export function saasFunnelsMcpPrompts() {
+  return saasFunnelsPlaybooks.map((playbook) => ({
+    arguments: playbook.arguments,
+    description: playbook.description,
+    name: playbook.name,
+    title: playbook.title,
+  }));
+}
+
+export function getSaaSFunnelsMcpPrompt(name: string, args: JsonObject) {
+  const playbook = saasFunnelsPlaybooks.find((candidate) => candidate.name === name);
+  if (!playbook) throw new McpProtocolError(-32602, `Unknown prompt "${name}".`);
+  const values: Record<string, string | undefined> = {};
+  for (const argument of playbook.arguments) {
+    const value = args[argument.name];
+    if (argument.required && (typeof value !== "string" || !value.trim()))
+      throw new McpProtocolError(-32602, `${argument.name} is required.`);
+    values[argument.name] = typeof value === "string" ? value.slice(0, 2_000) : undefined;
+  }
+  return {
+    description: playbook.description,
+    messages: [
+      {
+        content: { text: playbook.render(values), type: "text" },
+        role: "user",
+      },
+    ],
+  };
+}
+
 export async function handleSaaSFunnelsMcpMessage(
   message: unknown,
   options: SaaSFunnelsMcpOptions = {},
@@ -1763,13 +2218,14 @@ export async function handleSaaSFunnelsMcpMessage(
     if (request.method === "initialize") {
       return successResponse(id, {
         capabilities: {
+          prompts: {},
           resources: {},
           tools: {
             listChanged: false,
           },
         },
         instructions:
-          "Use SaaSFunnels MCP to validate revenue event payloads, inspect and plan Funnel entries, read setup/readiness context, and generate coding-agent handoffs. Live reads require SAASFUNNELS_API_KEY with developer:read scope. Versioned Funnel draft writes require explicit enablement and funnels:author scope; MCP cannot publish. Setup smoke sends require explicit enablement and SAASFUNNELS_INGEST_API_KEY.",
+          "Use SaaSFunnels MCP to build, wire up and test Funnels in this app: start with list_funnel_templates and create_funnel_draft, edit with apply_funnel_changes, check with get_launch_checklist and validate_funnel_draft, and hand the merchant the Studio link to publish. The prompts list has step-by-step playbooks. It also validates revenue event payloads, plans Funnel entries and reads setup/readiness context. Live reads require SAASFUNNELS_API_KEY with developer:read scope. Versioned Funnel draft writes require explicit enablement and funnels:author scope; MCP cannot publish. Setup smoke sends require explicit enablement and SAASFUNNELS_INGEST_API_KEY.",
         protocolVersion: mcpProtocolVersion,
         serverInfo: {
           name: SAASFUNNELS_PRODUCT_NAME.toLowerCase(),
@@ -1780,6 +2236,18 @@ export async function handleSaaSFunnelsMcpMessage(
     }
 
     if (request.method === "ping") return successResponse(id, {});
+
+    if (request.method === "prompts/list") {
+      return successResponse(id, { prompts: saasFunnelsMcpPrompts() });
+    }
+
+    if (request.method === "prompts/get") {
+      const params = parseArgs(request.params);
+      return successResponse(
+        id,
+        getSaaSFunnelsMcpPrompt(stringArg(params, "name") ?? "", parseArgs(params.arguments)),
+      );
+    }
 
     if (request.method === "resources/list") {
       return successResponse(id, {
