@@ -78,7 +78,10 @@ export const saasFunnelsMcpToolCapabilityIds = {
   submit_feature_manifest: "feature.manifest.submit",
   create_funnel_draft: "funnel.draft.create",
   get_funnel_command_schema: "funnel.draft.check",
+  get_funnel_definition: "funnel.draft.check",
+  get_funnel_design_reference: "funnel.draft.check",
   get_funnel_outline: "funnel.draft.check",
+  update_funnel_draft: "funnel.draft.author",
   get_install_status: "developer.workspace.read",
   get_launch_checklist: "funnel.draft.check",
   get_offer_catalog: "funnel.offers.read",
@@ -355,6 +358,7 @@ export const wholeDataToolNames = new Set([
   "create_funnel_draft",
   "get_funnel_command_schema",
   "get_funnel_definition",
+  "get_funnel_design_reference",
   "get_funnel_outline",
   "get_funnel_state",
   "get_install_status",
@@ -687,6 +691,8 @@ const hostedWorkspaceToolNames = new Set([
   "create_funnel_draft",
   "propose_allowed_site",
   "get_funnel_command_schema",
+  "get_funnel_definition",
+  "get_funnel_design_reference",
   "get_funnel_outline",
   "get_install_status",
   "get_launch_checklist",
@@ -694,6 +700,7 @@ const hostedWorkspaceToolNames = new Set([
   "list_funnel_templates",
   "run_funnel_binding_test",
   "submit_funnel_entry_evidence",
+  "update_funnel_draft",
   "validate_funnel_draft",
 ]);
 
@@ -1178,6 +1185,29 @@ export function saasFunnelsMcpToolDefinitions({
     {
       annotations: readOnly,
       description:
+        "The whole Funnel draft definition as JSON (steps, elements, buttons, design, targeting, Offers), its draft_revision and schema_version. Edit it like code and send it back with update_funnel_draft.",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "get_funnel_definition",
+      title: "Get Funnel Definition",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "What a Funnel step can hold: every element kind with a working example, surfaces, built-in images, faces and backgrounds. Pass topic (an element kind such as heading or offer:plan_table, or button, presentation, step, step_design) for its full JSON Schema.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          topic: { description: "Optional element kind or topic.", type: "string" },
+        },
+        type: "object",
+      },
+      name: "get_funnel_design_reference",
+      title: "Get Funnel Design Reference",
+    },
+    {
+      annotations: readOnly,
+      description:
         "The workspace's published plans, prices and discounts a Funnel Offer can use, with the plan map to reference in Offer strategies. New discounts are prepared in a draft and created in Studio.",
       inputSchema: emptyLiveInputSchema(),
       name: "get_offer_catalog",
@@ -1272,6 +1302,38 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "apply_funnel_changes",
         title: "Apply Funnel Changes",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Save a Funnel draft as you want it: send the whole definition from get_funnel_definition with your edits, or a JSON Patch (RFC 6902) against it. The server turns it into Studio's own edit commands, checks them all, and saves them as one batch the merchant can undo; nothing saves if any is refused. Returns problems, plus not_applied paths Studio couldn't set. Never publishes.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            agent_name: { description: "Your name as the merchant should see it, such as Claude Code.", type: "string" },
+            api_base_url: apiBaseUrlSchema,
+            batch_id: { description: "Optional 6–24 lowercase letters/digits.", type: "string" },
+            definition: { description: "The whole definition as you want it. Send this or patch.", type: "object" },
+            expected_draft_revision: { minimum: 0, type: "integer" },
+            funnel_id: { type: "string" },
+            patch: {
+              description: "JSON Patch operations such as { op: \"replace\", path: \"/steps/1/title\", value: \"…\" }. Send this or definition.",
+              items: { type: "object" },
+              maxItems: 200,
+              minItems: 1,
+              type: "array",
+            },
+          },
+          required: ["funnel_id", "expected_draft_revision"],
+          type: "object",
+        },
+        name: "update_funnel_draft",
+        title: "Update Funnel Draft",
       },
       {
         annotations: {
@@ -2045,10 +2107,23 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     }
+    if (name === "get_funnel_design_reference") {
+      const topic = stringArg(args, "topic");
+      if (topic && !/^[a-z_:]{1,60}$/.test(topic))
+        throw new McpProtocolError(-32602, "topic must be an element kind such as heading, or button, presentation, step or step_design.");
+      return result(
+        await developerGet(
+          `/api/developer-tools/funnels/design-reference${topic ? `?topic=${encodeURIComponent(topic)}` : ""}`,
+          args,
+          options,
+        ),
+      );
+    }
     if (
       name === "get_launch_checklist" ||
       name === "validate_funnel_draft" ||
-      name === "get_funnel_outline"
+      name === "get_funnel_outline" ||
+      name === "get_funnel_definition"
     ) {
       const funnelId = uuidArg(args, "funnel_id", true);
       const resource =
@@ -2056,7 +2131,9 @@ export async function callSaaSFunnelsMcpTool(
           ? "checklist"
           : name === "validate_funnel_draft"
             ? "validation"
-            : "outline";
+            : name === "get_funnel_definition"
+              ? "definition"
+              : "outline";
       return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${resource}`,
@@ -2065,7 +2142,7 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     }
-    if (name === "create_funnel_draft" || name === "apply_funnel_changes") {
+    if (name === "create_funnel_draft" || name === "apply_funnel_changes" || name === "update_funnel_draft") {
       if (!options.allowFunnelWrites) {
         throw new McpToolExecutionError("Funnel draft writes are disabled.", {
           enablement:
@@ -2088,6 +2165,35 @@ export async function callSaaSFunnelsMcpTool(
               request_key: requestKey,
               ...(templateKey ? { template_key: templateKey } : {}),
               ...(featureKey ? { feature_key: featureKey } : {}),
+            },
+            options,
+            "funnels:author",
+          ),
+        );
+      }
+      if (name === "update_funnel_draft") {
+        const funnelId = uuidArg(args, "funnel_id", true);
+        const revision = args.expected_draft_revision;
+        const definition = args.definition;
+        const patch = args.patch;
+        const hasDefinition = definition && typeof definition === "object" && !Array.isArray(definition);
+        const hasPatch = Array.isArray(patch) && patch.length > 0 && patch.length <= 200;
+        if (!Number.isInteger(revision) || Number(revision) < 0 || hasDefinition === hasPatch)
+          throw new McpProtocolError(
+            -32602,
+            "funnel_id, expected_draft_revision and either definition or patch (1–200 operations) are required.",
+          );
+        const agentName = stringArg(args, "agent_name");
+        const batchId = stringArg(args, "batch_id");
+        return result(
+          await developerPost(
+            `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/definition`,
+            args,
+            {
+              expected_draft_revision: revision,
+              ...(hasDefinition ? { definition } : { patch }),
+              ...(agentName ? { agent_name: agentName.slice(0, 60) } : {}),
+              ...(batchId ? { batch_id: batchId } : {}),
             },
             options,
             "funnels:author",
