@@ -203,7 +203,7 @@ describe("SaaSFunnels CLI contract", () => {
     expect(payload.errors).toContainEqual(
       expect.objectContaining({
         code: "live_check_unavailable",
-        message: "Missing SAASFUNNELS_API_KEY for live developer diagnostics.",
+        message: "Missing SAASFUNNELS_API_KEY for live developer diagnostics. Run saasfunnels login to sign in.",
       }),
     );
   });

@@ -16,7 +16,21 @@ Start in your app repository:
 npx --yes saasfunnels@latest setup
 ```
 
-The explicit version tag avoids running an older project-local CLI. Setup asks where developer access is saved (Doppler or `.env.local`) when needed, requests approval before uploading findings, and shows each discovery stage. It never prints keys, rewrites env files, deploys your app, or approves inferred plans. Connect Stripe and create app credentials in the web Setup first. `setup run` remains a compatible entry point.
+The explicit version tag avoids running an older project-local CLI. With no key loaded, setup signs you in with the browser: it prints a link and a code, opens the browser, and carries on once you approve (new accounts are created on that page, along with connecting Stripe and your site). It can also load an existing key from Doppler or `.env.local`. Setup requests approval before uploading findings and shows each discovery stage. It never prints keys, rewrites env files, deploys your app, or approves inferred plans. `setup run` remains a compatible entry point.
+
+### Signing in
+
+```bash
+npx --yes saasfunnels@latest login     # browser sign-in; --no-browser prints the link only
+npx --yes saasfunnels@latest whoami    # workspace and key name, never the key
+npx --yes saasfunnels@latest logout    # revokes the key and deletes it from this computer
+```
+
+The key is saved in `~/.config/saasfunnels/credentials.json` (`%APPDATA%\saasfunnels` on Windows) with owner-only permissions. `SAASFUNNELS_API_KEY` and `--env-file` take precedence over it. `--save-env .env.local` also writes it to that file, but only when git ignores the file.
+
+When a coding agent or CI runs the command (no terminal), it never prompts. It prints the link and code, waits about 90 seconds, and if you haven't approved yet, exits with "Approve in the browser, then run the same command again"; the next run picks up the same code. `--json` prints one JSON object per line, each with `schema_version`. `--non-interactive` (CI) never starts a sign-in.
+
+The CLI sends no usage analytics, so there's nothing for `DO_NOT_TRACK` to turn off.
 
 For scripts, use `--env-file .env.local --send --non-interactive`, or inject `SAASFUNNELS_API_KEY` from your secret manager. Without explicit approval, non-interactive runs stop without uploading. Run `setup --help` for setup-only guidance. Runtime implementation and payment verification remain in the web Setup.
 
@@ -51,7 +65,7 @@ approved set is reviewable.
 - uses: LeadEngine-ai/saasfunnels-cli/action@v0.7.0
   with:
     api-key: ${{ secrets.SAASFUNNELS_API_KEY }}
-    cli-version: 0.2.1 # pin it; a floating version rebaselines drift
+    cli-version: 0.8.0 # pin it; a floating version rebaselines drift
     discovery-roots: app,lib
 ```
 

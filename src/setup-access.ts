@@ -12,12 +12,14 @@ export async function resolveSetupAccess(options: {
   envFile?: string;
   prompt?: (message: string) => Promise<string>;
   loadDoppler?: () => Promise<string>;
-}) {
+  /** No TTY but not CI (an agent's shell): start the browser login. */
+  allowLogin?: boolean;
+}): Promise<{ key?: string; error?: string; login?: true }> {
   if (options.key?.trim()) return { key: options.key.trim() };
   let file = options.envFile;
   if (!file && options.prompt) {
     const choice = (await options.prompt(
-      "Developer access is not loaded. Where did you save SAASFUNNELS_API_KEY?\n  1. Doppler (this folder’s configured project)\n  2. .env.local in this app\n  3. I haven’t saved it yet\nChoose [1/2/3]: ",
+      "Developer access is not loaded.\n  1. Load SAASFUNNELS_API_KEY from Doppler (this folder’s configured project)\n  2. Load SAASFUNNELS_API_KEY from .env.local in this app\n  3. Sign in with the browser\nChoose [1/2/3]: ",
     )).trim();
     if (choice === "1") {
       try {
@@ -31,6 +33,7 @@ export async function resolveSetupAccess(options: {
       return { error: "Couldn’t load developer access from Doppler. Check this folder’s Doppler project/config and save SAASFUNNELS_API_KEY there, then rerun this command." };
     }
     if (choice === "2") file = ".env.local";
+    else if (choice !== "1") return { login: true as const };
   }
   if (file) {
     try {
@@ -41,5 +44,6 @@ export async function resolveSetupAccess(options: {
     } catch { /* Do not print the path, contents, or parser exception. */ }
     return { error: "Couldn’t find SAASFUNNELS_API_KEY in the selected env file. Save the developer access key there, then rerun this command. No file was changed." };
   }
-  return { error: "Open SaaSFunnels → Setup → Environment values → Developer setup access. Save SAASFUNNELS_API_KEY in your secret manager or .env.local, then run npx --yes saasfunnels@latest setup again. Never paste the key into a command. For automation, load it into the process or use --env-file .env.local." };
+  if (options.allowLogin) return { login: true as const };
+  return { error: "Run npx --yes saasfunnels@latest login to sign in with the browser. For CI, open SaaSFunnels → Setup → Environment values → Developer setup access, load SAASFUNNELS_API_KEY into the process or use --env-file .env.local, then run setup again. Never paste the key into a command." };
 }
