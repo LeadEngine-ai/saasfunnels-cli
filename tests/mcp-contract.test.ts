@@ -93,6 +93,7 @@ describe("SaaSFunnels MCP server", () => {
       "confirm_event_mapping",
       "create_funnel_draft",
       "run_funnel_binding_test",
+      "run_funnel_test",
       "submit_funnel_entry_evidence",
       "update_funnel_draft",
     ]);
@@ -364,6 +365,9 @@ describe("SaaSFunnels MCP server", () => {
       "render_funnel",
       "get_targeting_catalog",
       "get_brand_kit",
+      "propose_brand_kit",
+      "list_funnel_images",
+      "get_funnel_integrations",
       "get_offer_catalog",
       "propose_allowed_site",
       "preview_feature_manifest",

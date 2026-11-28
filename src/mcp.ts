@@ -83,8 +83,12 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_funnel_outline: "funnel.draft.check",
   archive_funnel_draft: "funnel.draft.author",
   get_brand_kit: "funnel.draft.check",
+  get_funnel_integrations: "funnel.draft.check",
+  list_funnel_images: "funnel.draft.check",
+  propose_brand_kit: "setup.allowed_site.propose",
   get_targeting_catalog: "funnel.draft.check",
   render_funnel: "funnel.draft.check",
+  run_funnel_test: "funnel.entry.test",
   render_funnel_step: "funnel.draft.check",
   update_funnel_draft: "funnel.draft.author",
   get_install_status: "developer.workspace.read",
@@ -371,9 +375,13 @@ export const wholeDataToolNames = new Set([
   "get_offer_catalog",
   "inspect_funnel_entry",
   "get_brand_kit",
+  "get_funnel_integrations",
   "get_targeting_catalog",
+  "list_funnel_images",
   "list_funnel_templates",
   "list_funnels",
+  "propose_brand_kit",
+  "run_funnel_test",
   "update_funnel_draft",
   "validate_funnel_draft",
 ]);
@@ -727,11 +735,15 @@ const hostedWorkspaceToolNames = new Set([
   "get_offer_catalog",
   "archive_funnel_draft",
   "get_brand_kit",
+  "get_funnel_integrations",
   "get_targeting_catalog",
+  "list_funnel_images",
   "list_funnel_templates",
+  "propose_brand_kit",
   "render_funnel",
   "render_funnel_step",
   "run_funnel_binding_test",
+  "run_funnel_test",
   "submit_funnel_entry_evidence",
   "update_funnel_draft",
   "validate_funnel_draft",
@@ -1293,6 +1305,47 @@ export function saasFunnelsMcpToolDefinitions({
     {
       annotations: readOnly,
       description:
+        "Propose brand kit colors, fonts or corner style. Nothing changes: you get an approve_url where the merchant reviews and saves it in Settings → Brand, because it changes every Funnel, live ones too. Colors are hex such as #1F6FEB.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          accent_color: { type: "string" },
+          api_base_url: apiBaseUrlSchema,
+          body_font: { type: "string" },
+          corner_style: { enum: ["square", "soft", "rounded", "pill"], type: "string" },
+          heading_font: { type: "string" },
+          primary_color: { type: "string" },
+          surface_color: { type: "string" },
+          text_color: { type: "string" },
+        },
+        type: "object",
+      },
+      name: "propose_brand_kit",
+      title: "Propose Brand Kit",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "The workspace's uploaded images, 50 at a time, each with the source to place it ({ kind: \"asset\", assetId }). Any https image also works as { kind: \"external\", url }.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { after: { description: "next_cursor from the last page.", type: "string" }, api_base_url: apiBaseUrlSchema },
+        type: "object",
+      },
+      name: "list_funnel_images",
+      title: "List Funnel Images",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Where a Funnel sends answers, Leads and Opportunity stages (Slack, HubSpot, Attio, Customer.io, webhooks, email), and the workspace's connected tools. Routes apply to live Funnels and send customer data, so the merchant changes them in Studio (change_in).",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "get_funnel_integrations",
+      title: "Get Funnel Integrations",
+    },
+    {
+      annotations: readOnly,
+      description:
         "The workspace's published plans, prices and discounts a Funnel Offer can use, with the plan map to reference in Offer strategies. New discounts are prepared in a draft and created in Studio.",
       inputSchema: emptyLiveInputSchema(),
       name: "get_offer_catalog",
@@ -1437,6 +1490,24 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "archive_funnel_draft",
         title: "Archive Funnel Draft",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Run Studio's test on the current draft: five audience and customer-view cases through the production renderer. A pass is what Publish needs. Returns passed, the problems to fix, and ready_to_publish. Run it after your last edit.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: { api_base_url: apiBaseUrlSchema, funnel_id: { type: "string" } },
+          required: ["funnel_id"],
+          type: "object",
+        },
+        name: "run_funnel_test",
+        title: "Run Funnel Test",
       },
       {
         annotations: {
@@ -2237,6 +2308,22 @@ export async function callSaaSFunnelsMcpTool(
       );
       return renderToolResult(data);
     }
+    if (name === "propose_brand_kit") {
+      const fields = ["accent_color", "body_font", "corner_style", "heading_font", "primary_color", "surface_color", "text_color"];
+      const body = Object.fromEntries(fields.flatMap((field) => {
+        const value = stringArg(args, field);
+        return value ? [[field, value.slice(0, 40)]] : [];
+      }));
+      if (!Object.keys(body).length) throw new McpProtocolError(-32602, "Send at least one color, font or corner_style.");
+      return result(await developerPost("/api/developer-tools/funnels/brand-kit", args, body, options, "developer:read"));
+    }
+    if (name === "list_funnel_images") {
+      const after = stringArg(args, "after");
+      if (after && !uuidPattern.test(after)) throw new McpProtocolError(-32602, "after must be a next_cursor value.");
+      return result(
+        await developerGet(`/api/developer-tools/funnels/images${after ? `?after=${encodeURIComponent(after)}` : ""}`, args, options),
+      );
+    }
     if (name === "get_targeting_catalog" || name === "get_brand_kit")
       return result(
         await developerGet(
@@ -2245,6 +2332,27 @@ export async function callSaaSFunnelsMcpTool(
           options,
         ),
       );
+    if (name === "run_funnel_test") {
+      if (!options.allowFunnelTests)
+        throw new McpToolExecutionError("Funnel Test is disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-tests or SAASFUNNELS_MCP_ENABLE_FUNNEL_TESTS=true.",
+          error: "Funnel Test is disabled by default.",
+          ok: false,
+          required_scope: "funnels:author",
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      const funnelId = uuidArg(args, "funnel_id", true);
+      return result(
+        await developerPost(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/test`,
+          args,
+          {},
+          options,
+          "funnels:author",
+        ),
+      );
+    }
     if (name === "archive_funnel_draft") {
       if (!options.allowFunnelWrites)
         throw new McpToolExecutionError("Funnel draft writes are disabled.", {
@@ -2282,7 +2390,8 @@ export async function callSaaSFunnelsMcpTool(
       name === "get_launch_checklist" ||
       name === "validate_funnel_draft" ||
       name === "get_funnel_outline" ||
-      name === "get_funnel_definition"
+      name === "get_funnel_definition" ||
+      name === "get_funnel_integrations"
     ) {
       const funnelId = uuidArg(args, "funnel_id", true);
       const resource =
@@ -2292,7 +2401,9 @@ export async function callSaaSFunnelsMcpTool(
             ? "validation"
             : name === "get_funnel_definition"
               ? "definition"
-              : "outline";
+              : name === "get_funnel_integrations"
+                ? "integrations"
+                : "outline";
       return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${resource}`,
