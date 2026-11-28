@@ -15,6 +15,8 @@ const rules = `Rules:
 - To change anything in a draft, read it with get_funnel_definition, edit the JSON, and send it back with update_funnel_draft (the whole definition or a JSON Patch) and the draft_revision you read. On a revision conflict, read again and retry. Nothing saves if any part is refused.
 - After a design change, look at it with render_funnel_step (or render_funnel for the whole journey) before you say it's done.
 - get_funnel_design_reference lists every element kind, layout option, surface and built-in image with a working example; ask for a topic to get its full schema.
+- Use the real keys from get_targeting_catalog for who sees a Funnel, where and when, and get_brand_kit for the merchant's colors and fonts.
+- If you made a draft only to try something, archive it with archive_funnel_draft when you're done.
 - For a single small edit you can also use apply_funnel_changes with commands from get_funnel_command_schema.
 - Set agent_name to your name (for example "Claude Code") so the merchant sees who changed what in Studio.
 - Never put secrets, source code or customer data into a tool call.`;

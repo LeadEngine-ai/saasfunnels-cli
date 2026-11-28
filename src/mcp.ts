@@ -81,6 +81,9 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_funnel_definition: "funnel.draft.check",
   get_funnel_design_reference: "funnel.draft.check",
   get_funnel_outline: "funnel.draft.check",
+  archive_funnel_draft: "funnel.draft.author",
+  get_brand_kit: "funnel.draft.check",
+  get_targeting_catalog: "funnel.draft.check",
   render_funnel: "funnel.draft.check",
   render_funnel_step: "funnel.draft.check",
   update_funnel_draft: "funnel.draft.author",
@@ -367,6 +370,8 @@ export const wholeDataToolNames = new Set([
   "get_launch_checklist",
   "get_offer_catalog",
   "inspect_funnel_entry",
+  "get_brand_kit",
+  "get_targeting_catalog",
   "list_funnel_templates",
   "list_funnels",
   "update_funnel_draft",
@@ -720,6 +725,9 @@ const hostedWorkspaceToolNames = new Set([
   "get_install_status",
   "get_launch_checklist",
   "get_offer_catalog",
+  "archive_funnel_draft",
+  "get_brand_kit",
+  "get_targeting_catalog",
   "list_funnel_templates",
   "render_funnel",
   "render_funnel_step",
@@ -1269,6 +1277,22 @@ export function saasFunnelsMcpToolDefinitions({
     {
       annotations: readOnly,
       description:
+        "The real event keys, account facts, person and usage fields, and page places this workspace can target, so you never invent one. Use them in the definition's trigger and delivery.",
+      inputSchema: emptyLiveInputSchema(),
+      name: "get_targeting_catalog",
+      title: "Get Targeting Catalog",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "The workspace brand kit every Funnel uses: colors, fonts, corner style and logos. The merchant changes it in Settings → Brand (settings_url).",
+      inputSchema: emptyLiveInputSchema(),
+      name: "get_brand_kit",
+      title: "Get Brand Kit",
+    },
+    {
+      annotations: readOnly,
+      description:
         "The workspace's published plans, prices and discounts a Funnel Offer can use, with the plan map to reference in Offer strategies. New discounts are prepared in a draft and created in Studio.",
       inputSchema: emptyLiveInputSchema(),
       name: "get_offer_catalog",
@@ -1395,6 +1419,24 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "update_funnel_draft",
         title: "Update Funnel Draft",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Archive a Funnel draft that was never published, such as a test draft you made. The merchant can restore it from the library's Archived view. Published Funnels stay with the merchant.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: { api_base_url: apiBaseUrlSchema, funnel_id: { type: "string" } },
+          required: ["funnel_id"],
+          type: "object",
+        },
+        name: "archive_funnel_draft",
+        title: "Archive Funnel Draft",
       },
       {
         annotations: {
@@ -2194,6 +2236,35 @@ export async function callSaaSFunnelsMcpTool(
         options,
       );
       return renderToolResult(data);
+    }
+    if (name === "get_targeting_catalog" || name === "get_brand_kit")
+      return result(
+        await developerGet(
+          `/api/developer-tools/funnels/${name === "get_brand_kit" ? "brand-kit" : "targeting-catalog"}`,
+          args,
+          options,
+        ),
+      );
+    if (name === "archive_funnel_draft") {
+      if (!options.allowFunnelWrites)
+        throw new McpToolExecutionError("Funnel draft writes are disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-writes or SAASFUNNELS_MCP_ENABLE_FUNNEL_WRITES=true.",
+          error: "Funnel draft writes are disabled by default.",
+          ok: false,
+          required_scope: "funnels:author",
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      const funnelId = uuidArg(args, "funnel_id", true);
+      return result(
+        await developerPost(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/archive`,
+          args,
+          {},
+          options,
+          "funnels:author",
+        ),
+      );
     }
     if (name === "get_funnel_design_reference") {
       const topic = stringArg(args, "topic");
