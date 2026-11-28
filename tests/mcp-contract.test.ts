@@ -89,10 +89,12 @@ describe("SaaSFunnels MCP server", () => {
     ).toEqual([
       "apply_funnel_changes",
       "apply_funnel_entry",
+      "archive_funnel_draft",
       "confirm_event_mapping",
       "create_funnel_draft",
       "run_funnel_binding_test",
       "submit_funnel_entry_evidence",
+      "update_funnel_draft",
     ]);
     /* Feature manifests stay key-only (features:write). */
     expect(hosted.map((tool) => tool.name)).not.toContain("submit_feature_manifest");
@@ -356,6 +358,12 @@ describe("SaaSFunnels MCP server", () => {
       "get_funnel_command_schema",
       "validate_funnel_draft",
       "get_funnel_outline",
+      "get_funnel_definition",
+      "get_funnel_design_reference",
+      "render_funnel_step",
+      "render_funnel",
+      "get_targeting_catalog",
+      "get_brand_kit",
       "get_offer_catalog",
       "propose_allowed_site",
       "preview_feature_manifest",

@@ -12,8 +12,12 @@ export type SaaSFunnelsPlaybook = {
 
 const rules = `Rules:
 - You edit drafts only. Never try to publish or delete; hand the merchant the Studio link (studio_url) to publish.
-- Read the draft revision with get_funnel_state before apply_funnel_changes and send it as expected_draft_revision. On a revision conflict, read again and retry.
-- Get each edit command's shape from get_funnel_command_schema. Send at most 16 changes per batch; the whole batch is refused if any change is.
+- To change anything in a draft, read it with get_funnel_definition, edit the JSON, and send it back with update_funnel_draft (the whole definition or a JSON Patch) and the draft_revision you read. On a revision conflict, read again and retry. Nothing saves if any part is refused.
+- After a design change, look at it with render_funnel_step (or render_funnel for the whole journey) before you say it's done.
+- get_funnel_design_reference lists every element kind, layout option, surface and built-in image with a working example; ask for a topic to get its full schema.
+- Use the real keys from get_targeting_catalog for who sees a Funnel, where and when, and get_brand_kit for the merchant's colors and fonts.
+- If you made a draft only to try something, archive it with archive_funnel_draft when you're done.
+- For a single small edit you can also use apply_funnel_changes with commands from get_funnel_command_schema.
 - Set agent_name to your name (for example "Claude Code") so the merchant sees who changed what in Studio.
 - Never put secrets, source code or customer data into a tool call.`;
 
@@ -25,7 +29,7 @@ const launchSteps = (goal: string, template?: string) => `Goal: ${goal}
 4. Call get_launch_checklist. For the entry, call propose_funnel_entry_installation, add the binding in this app's code exactly as planned, then apply_funnel_entry and submit_funnel_entry_evidence.
 5. If the entry uses an event this app now sends, call confirm_event_mapping so it's read correctly.
 6. Call run_funnel_binding_test and trigger the entry in the app with the returned test token. Call get_launch_checklist again until the entry is detected in Test.
-7. Call get_funnel_outline and validate_funnel_draft. Fix anything that blocks publishing with apply_funnel_changes.
+7. Call get_funnel_outline and validate_funnel_draft. Fix anything that blocks publishing with update_funnel_draft.
 8. Finish by telling the merchant what you set up, what's left on the checklist, and the studio_url to review and publish.
 
 ${rules}`;
@@ -73,11 +77,13 @@ export const saasFunnelsPlaybooks: SaaSFunnelsPlaybook[] = [
     name: "edit_funnel",
     render: (args) => `Goal: ${args.change?.trim() || "Improve this Funnel."}
 
-1. Call get_funnel_state and get_funnel_outline for funnel ${args.funnel_id ?? "<funnel_id>"} to see the draft and what customers see.
-2. If the change involves an Offer, call get_offer_catalog and use its plans, prices and plan_map. New discounts are prepared in the draft and created by the merchant in Studio.
-3. Call get_funnel_command_schema for each command type you need, then apply_funnel_changes with every edit in one batch.
-4. Call get_funnel_outline and validate_funnel_draft to check the result; fix anything that blocks publishing.
-5. Tell the merchant what changed and give them the studio_url to review, undo or publish.
+1. Call get_funnel_definition for funnel ${args.funnel_id ?? "<funnel_id>"} to read the draft, and get_funnel_outline to see it as customers do.
+2. If you need an element, layout or style you haven't seen, call get_funnel_design_reference (with a topic for its full schema).
+3. If the change involves an Offer, call get_offer_catalog and use its plans, prices and plan_map. New discounts are prepared in the draft and created by the merchant in Studio.
+4. Make every edit in the JSON and send it with update_funnel_draft. If it returns not_applied paths, make those with apply_funnel_changes or tell the merchant.
+5. Call render_funnel_step for each step you changed (device both) and look at it. Fix anything that looks wrong: clipped or crowded text, weak contrast, a layout that breaks on mobile. Repeat until it looks right.
+6. Call validate_funnel_draft; fix anything that blocks publishing.
+7. Tell the merchant what changed and give them the studio_url to review, undo or publish.
 
 ${rules}`,
     title: "Edit a Funnel",
@@ -92,7 +98,7 @@ ${rules}`,
 
 1. Call get_funnel_results (window 30d). Find the step with the highest drop_off and look at the answers and actions.
 2. Call get_funnel_outline to read that step as customers see it.
-3. Propose one change to the merchant and why. When they agree, set up an A/B test on the draft with apply_funnel_changes using set_experiment (get its shape from get_funnel_command_schema).
+3. Propose one change to the merchant and why. When they agree, set up an A/B test on the draft: add the variant to the step and turn on the experiment with update_funnel_draft (see get_funnel_design_reference topic step for variants, and get_funnel_command_schema type set_experiment).
 4. Call validate_funnel_draft, then give the merchant the studio_url to review and publish the test.
 
 ${rules}`,

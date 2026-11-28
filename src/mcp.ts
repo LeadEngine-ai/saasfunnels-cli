@@ -78,7 +78,15 @@ export const saasFunnelsMcpToolCapabilityIds = {
   submit_feature_manifest: "feature.manifest.submit",
   create_funnel_draft: "funnel.draft.create",
   get_funnel_command_schema: "funnel.draft.check",
+  get_funnel_definition: "funnel.draft.check",
+  get_funnel_design_reference: "funnel.draft.check",
   get_funnel_outline: "funnel.draft.check",
+  archive_funnel_draft: "funnel.draft.author",
+  get_brand_kit: "funnel.draft.check",
+  get_targeting_catalog: "funnel.draft.check",
+  render_funnel: "funnel.draft.check",
+  render_funnel_step: "funnel.draft.check",
+  update_funnel_draft: "funnel.draft.author",
   get_install_status: "developer.workspace.read",
   get_launch_checklist: "funnel.draft.check",
   get_offer_catalog: "funnel.offers.read",
@@ -326,6 +334,97 @@ function sanitizeJson(value: unknown, key = "", depth = 0): unknown {
         sanitizeJson(nestedValue, nestedKey, depth + 1),
       ]),
   );
+}
+
+/* Funnel tools return whole data: a Funnel's steps, routes, links and
+   install keys are what an agent edits (LEA-2277). Only real secrets are
+   redacted, by exact field name or by a secret-key prefix. */
+const funnelSecretKeys = new Set([
+  "access_token",
+  "api_key",
+  "apikey",
+  "authorization",
+  "client_secret",
+  "cookie",
+  "password",
+  "refresh_token",
+  "secret",
+  "secret_key",
+  "server_key",
+  "set-cookie",
+  "signing_secret",
+  "webhook_secret",
+]);
+const funnelSecretValuePattern =
+  /\b((?:sk|rk|whsec)_(?:live|test)?_?[A-Za-z0-9]{8,}|pv_live_[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|gh[pousr]_[A-Za-z0-9]{20,})\b/g;
+
+export const wholeDataToolNames = new Set([
+  "apply_funnel_changes",
+  "create_funnel_draft",
+  "get_funnel_command_schema",
+  "get_funnel_definition",
+  "get_funnel_design_reference",
+  "get_funnel_outline",
+  "get_funnel_state",
+  "get_install_status",
+  "get_launch_checklist",
+  "get_offer_catalog",
+  "inspect_funnel_entry",
+  "get_brand_kit",
+  "get_targeting_catalog",
+  "list_funnel_templates",
+  "list_funnels",
+  "update_funnel_draft",
+  "validate_funnel_draft",
+]);
+
+export function sanitizeFunnelJson(value: unknown, key = "", depth = 0): unknown {
+  if (depth > 64) return "[truncated-depth]";
+  if (typeof value === "string") {
+    if (funnelSecretKeys.has(key.toLowerCase())) return "[redacted]";
+    return value.replace(funnelSecretValuePattern, "[redacted-token]");
+  }
+  if (Array.isArray(value))
+    return value.map((item) => sanitizeFunnelJson(item, key, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as JsonObject).map(([nestedKey, nestedValue]) => [
+      nestedKey,
+      sanitizeFunnelJson(nestedValue, nestedKey, depth + 1),
+    ]),
+  );
+}
+
+function funnelToolResult(data: unknown, isError = false) {
+  const structuredContent = saasFunnelsPublicValue(
+    sanitizeFunnelJson(data),
+  ) as JsonObject;
+  return {
+    content: [{ text: JSON.stringify(structuredContent), type: "text" }],
+    isError,
+    structuredContent,
+  };
+}
+
+type RenderedImage = { data_base64?: unknown; mime_type?: unknown; step_key?: unknown; device?: unknown };
+
+/* Step renders come back as MCP image content the agent can look at; the
+   structured result keeps everything but the image bytes (LEA-2279). */
+export function renderToolResult(data: unknown) {
+  const body = (data && typeof data === "object" ? data : {}) as JsonObject;
+  const record = (body.data && typeof body.data === "object" ? body.data : body) as JsonObject;
+  const images = Array.isArray(record.images) ? (record.images as RenderedImage[]) : [];
+  const summary = sanitizeFunnelJson({
+    ...record,
+    images: images.map(({ data_base64: _data, ...rest }) => rest),
+  }) as JsonObject;
+  const content: Array<Record<string, string>> = [{ text: JSON.stringify(summary), type: "text" }];
+  for (const image of images.slice(0, 16)) {
+    if (typeof image.data_base64 !== "string" || !/^image\/(png|jpeg)$/.test(String(image.mime_type))) continue;
+    content.push({ text: `Step ${String(image.step_key)} on ${String(image.device)}:`, type: "text" });
+    content.push({ data: image.data_base64, mimeType: String(image.mime_type), type: "image" });
+  }
+  return { content, isError: false, structuredContent: summary };
 }
 
 function saasFunnelsPublicValue(value: unknown): unknown {
@@ -620,13 +719,21 @@ const hostedWorkspaceToolNames = new Set([
   "create_funnel_draft",
   "propose_allowed_site",
   "get_funnel_command_schema",
+  "get_funnel_definition",
+  "get_funnel_design_reference",
   "get_funnel_outline",
   "get_install_status",
   "get_launch_checklist",
   "get_offer_catalog",
+  "archive_funnel_draft",
+  "get_brand_kit",
+  "get_targeting_catalog",
   "list_funnel_templates",
+  "render_funnel",
+  "render_funnel_step",
   "run_funnel_binding_test",
   "submit_funnel_entry_evidence",
+  "update_funnel_draft",
   "validate_funnel_draft",
 ]);
 
@@ -1111,6 +1218,81 @@ export function saasFunnelsMcpToolDefinitions({
     {
       annotations: readOnly,
       description:
+        "The whole Funnel draft definition as JSON (steps, elements, buttons, design, targeting, Offers), its draft_revision and schema_version. Edit it like code and send it back with update_funnel_draft.",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "get_funnel_definition",
+      title: "Get Funnel Definition",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "What a Funnel step can hold: every element kind with a working example, surfaces, built-in images, faces and backgrounds. Pass topic (an element kind such as heading or offer:plan_table, or button, presentation, step, step_design) for its full JSON Schema.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          topic: { description: "Optional element kind or topic.", type: "string" },
+        },
+        type: "object",
+      },
+      name: "get_funnel_design_reference",
+      title: "Get Funnel Design Reference",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "See a Funnel draft's step as a customer would: an image drawn by the real renderer at desktop (1440×900), mobile (390×844) or both, with sample values. Pass variant_key for an A/B alternative. Use it after every design change to check how it looks.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          device: { enum: ["desktop", "mobile", "both"], type: "string" },
+          funnel_id: { type: "string" },
+          step_key: { type: "string" },
+          variant_key: { type: "string" },
+        },
+        required: ["funnel_id", "step_key"],
+        type: "object",
+      },
+      name: "render_funnel_step",
+      title: "Render Funnel Step",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "See a whole Funnel draft at once: every step (up to 8) drawn by the real renderer, to check a journey in one call. Use render_funnel_step for full-size detail.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          device: { enum: ["desktop", "mobile"], type: "string" },
+          funnel_id: { type: "string" },
+        },
+        required: ["funnel_id"],
+        type: "object",
+      },
+      name: "render_funnel",
+      title: "Render Funnel",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "The real event keys, account facts, person and usage fields, and page places this workspace can target, so you never invent one. Use them in the definition's trigger and delivery.",
+      inputSchema: emptyLiveInputSchema(),
+      name: "get_targeting_catalog",
+      title: "Get Targeting Catalog",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "The workspace brand kit every Funnel uses: colors, fonts, corner style and logos. The merchant changes it in Settings → Brand (settings_url).",
+      inputSchema: emptyLiveInputSchema(),
+      name: "get_brand_kit",
+      title: "Get Brand Kit",
+    },
+    {
+      annotations: readOnly,
+      description:
         "The workspace's published plans, prices and discounts a Funnel Offer can use, with the plan map to reference in Offer strategies. New discounts are prepared in a draft and created in Studio.",
       inputSchema: emptyLiveInputSchema(),
       name: "get_offer_catalog",
@@ -1205,6 +1387,56 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "apply_funnel_changes",
         title: "Apply Funnel Changes",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Save a Funnel draft as you want it: send the whole definition from get_funnel_definition with your edits, or a JSON Patch (RFC 6902) against it. The server turns it into Studio's own edit commands, checks them all, and saves them as one batch the merchant can undo; nothing saves if any is refused. Returns problems, plus not_applied paths Studio couldn't set. Never publishes.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            agent_name: { description: "Your name as the merchant should see it, such as Claude Code.", type: "string" },
+            api_base_url: apiBaseUrlSchema,
+            batch_id: { description: "Optional 6–24 lowercase letters/digits.", type: "string" },
+            definition: { description: "The whole definition as you want it. Send this or patch.", type: "object" },
+            expected_draft_revision: { minimum: 0, type: "integer" },
+            funnel_id: { type: "string" },
+            patch: {
+              description: "JSON Patch operations such as { op: \"replace\", path: \"/steps/1/title\", value: \"…\" }. Send this or definition.",
+              items: { type: "object" },
+              maxItems: 200,
+              minItems: 1,
+              type: "array",
+            },
+          },
+          required: ["funnel_id", "expected_draft_revision"],
+          type: "object",
+        },
+        name: "update_funnel_draft",
+        title: "Update Funnel Draft",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Archive a Funnel draft that was never published, such as a test draft you made. The merchant can restore it from the library's Archived view. Published Funnels stay with the merchant.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: { api_base_url: apiBaseUrlSchema, funnel_id: { type: "string" } },
+          required: ["funnel_id"],
+          type: "object",
+        },
+        name: "archive_funnel_draft",
+        title: "Archive Funnel Draft",
       },
       {
         annotations: {
@@ -1604,6 +1836,10 @@ export async function callSaaSFunnelsMcpTool(
   args: JsonObject,
   options: SaaSFunnelsMcpOptions = {},
 ) {
+  const result = (data: unknown, isError = false) =>
+    wholeDataToolNames.has(name)
+      ? funnelToolResult(data, isError)
+      : structuredToolResult(data, isError);
   try {
     if (!options.hostedMode && "workspace_id" in args && hostedWorkspaceToolNames.has(name)) {
       throw new McpProtocolError(
@@ -1635,7 +1871,7 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "validate_event_payload") {
-      return structuredToolResult(
+      return result(
         validateDeveloperToolEventPayload({
           payload: objectArg(args, "payload"),
           source: sourceArg(args),
@@ -1644,7 +1880,7 @@ export async function callSaaSFunnelsMcpTool(
     }
 
     if (name === "validate_feature_catalog_manifest") {
-      return structuredToolResult(
+      return result(
         validateFeatureCatalogManifest(objectArg(args, "manifest")),
       );
     }
@@ -1664,7 +1900,7 @@ export async function callSaaSFunnelsMcpTool(
         stringArg(args, "endpoint") ??
         `${apiBaseUrl(options, args)}/api/events/ingest`;
       const artifacts = getDeveloperToolAgentHandoffArtifacts({ endpoint });
-      return structuredToolResult(
+      return result(
         saasFunnelsPublicValue(
           artifacts[target as keyof typeof artifacts],
         ) as JsonObject,
@@ -1672,7 +1908,7 @@ export async function callSaaSFunnelsMcpTool(
     }
 
     if (name === "get_integration_health")
-      return structuredToolResult(
+      return result(
         await developerGet(
           "/api/developer-tools/integrations/health",
           args,
@@ -1680,7 +1916,7 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     if (name === "list_workspaces")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/workspaces", {}, options),
       );
     if (name === "list_funnels") {
@@ -1706,13 +1942,13 @@ export async function callSaaSFunnelsMcpTool(
         limit: String(limit),
         offset: String(offset),
       });
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/funnels?${query}`, args, options),
       );
     }
     if (name === "get_funnel_state") {
       const funnelId = uuidArg(args, "funnel_id", true);
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}`,
           args,
@@ -1742,14 +1978,14 @@ export async function callSaaSFunnelsMcpTool(
         }
         query.set("attribution_role", attributionRole);
       }
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/results?${query}`, args, options),
       );
     }
     if (name === "get_funnel_results") {
       const funnelId = uuidArg(args, "funnel_id", true);
       const query = new URLSearchParams({ window: resultsWindowArg(args) });
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/results?${query}`,
           args,
@@ -1773,14 +2009,14 @@ export async function callSaaSFunnelsMcpTool(
         query.set("state", state);
       }
       const resource = name === "list_leads" ? "leads" : "opportunities";
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/${resource}?${query}`, args, options),
       );
     }
     if (name === "get_opportunity" || name === "get_lead") {
       const resource = name === "get_lead" ? "leads" : "opportunities";
       const id = uuidArg(args, name === "get_lead" ? "lead_id" : "opportunity_id", true);
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/${resource}/${encodeURIComponent(id)}`,
           args,
@@ -1789,7 +2025,7 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "get_workspace_readiness")
-      return structuredToolResult(
+      return result(
         await developerGet(
           "/api/developer-tools/signals/readiness",
           args,
@@ -1797,11 +2033,11 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     if (name === "list_mapping_gaps")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/mappings/gaps", args, options),
       );
     if (name === "list_recent_signals")
-      return structuredToolResult(
+      return result(
         await developerGet(
           "/api/developer-tools/signals/recent",
           args,
@@ -1812,7 +2048,7 @@ export async function callSaaSFunnelsMcpTool(
       const signalId = stringArg(args, "signal_id");
       if (!signalId)
         throw new McpProtocolError(-32602, "signal_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/signals/${encodeURIComponent(signalId)}/payload-preview`,
           args,
@@ -1824,7 +2060,7 @@ export async function callSaaSFunnelsMcpTool(
       const accountId = stringArg(args, "account_id");
       if (!accountId)
         throw new McpProtocolError(-32602, "account_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/accounts/${encodeURIComponent(accountId)}/strategy`,
           args,
@@ -1836,7 +2072,7 @@ export async function callSaaSFunnelsMcpTool(
       const accountId = stringArg(args, "account_id");
       if (!accountId)
         throw new McpProtocolError(-32602, "account_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/accounts/${encodeURIComponent(accountId)}/funnel-fit`,
           args,
@@ -1848,7 +2084,7 @@ export async function callSaaSFunnelsMcpTool(
       const funnelId = stringArg(args, "funnel_id");
       if (!funnelId)
         throw new McpProtocolError(-32602, "funnel_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry`,
           args,
@@ -1870,7 +2106,7 @@ export async function callSaaSFunnelsMcpTool(
           "funnel_id, intent, and entry_kind event|api are required.",
         );
       }
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry/plan`,
           args,
@@ -1892,12 +2128,12 @@ export async function callSaaSFunnelsMcpTool(
     if (name === "propose_allowed_site") {
       const site = stringArg(args, "site");
       if (!site || site.length > 300) throw new McpProtocolError(-32602, "site is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/setup/allowed-sites?site=${encodeURIComponent(site)}`, args, options),
       );
     }
     if (name === "preview_feature_manifest")
-      return structuredToolResult(
+      return result(
         await developerPost(
           "/api/developer-tools/features/instrumentation/preview",
           args,
@@ -1917,7 +2153,7 @@ export async function callSaaSFunnelsMcpTool(
         });
       }
       if (name === "submit_feature_manifest")
-        return structuredToolResult(
+        return result(
           await developerPost(
             "/api/developer-tools/features/instrumentation",
             args,
@@ -1933,7 +2169,7 @@ export async function callSaaSFunnelsMcpTool(
         throw new McpProtocolError(-32602, "source, raw_event_name and semantic_type are required.");
       const status = stringArg(args, "status");
       const eventKind = stringArg(args, "event_kind");
-      return structuredToolResult(
+      return result(
         await developerPost(
           "/api/developer-tools/mappings/confirm",
           args,
@@ -1950,15 +2186,15 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "list_funnel_templates")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/funnels/templates", args, options),
       );
     if (name === "get_install_status")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/setup/install-status", args, options),
       );
     if (name === "get_offer_catalog")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/offers", args, options),
       );
     if (name === "get_funnel_command_schema") {
@@ -1966,9 +2202,77 @@ export async function callSaaSFunnelsMcpTool(
       if (type && !/^[a-z_]{1,60}$/.test(type)) {
         throw new McpProtocolError(-32602, "type must be a command type such as set_step.");
       }
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/command-schema${type ? `?type=${encodeURIComponent(type)}` : ""}`,
+          args,
+          options,
+        ),
+      );
+    }
+    if (name === "render_funnel_step" || name === "render_funnel") {
+      const funnelId = uuidArg(args, "funnel_id", true);
+      const query = new URLSearchParams();
+      const device = stringArg(args, "device");
+      if (device) {
+        if (!["desktop", "mobile", ...(name === "render_funnel_step" ? ["both"] : [])].includes(device))
+          throw new McpProtocolError(-32602, "device must be desktop, mobile or both.");
+        query.set("device", device);
+      }
+      if (name === "render_funnel_step") {
+        const stepKey = stringArg(args, "step_key");
+        if (!stepKey || !/^[a-z0-9_-]{1,80}$/i.test(stepKey))
+          throw new McpProtocolError(-32602, "step_key is required.");
+        query.set("step_key", stepKey);
+        const variantKey = stringArg(args, "variant_key");
+        if (variantKey) {
+          if (!/^[a-z0-9_-]{1,80}$/i.test(variantKey)) throw new McpProtocolError(-32602, "variant_key is invalid.");
+          query.set("variant_key", variantKey);
+        }
+      }
+      const data = await developerGet(
+        `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/render${query.size ? `?${query}` : ""}`,
+        args,
+        options,
+      );
+      return renderToolResult(data);
+    }
+    if (name === "get_targeting_catalog" || name === "get_brand_kit")
+      return result(
+        await developerGet(
+          `/api/developer-tools/funnels/${name === "get_brand_kit" ? "brand-kit" : "targeting-catalog"}`,
+          args,
+          options,
+        ),
+      );
+    if (name === "archive_funnel_draft") {
+      if (!options.allowFunnelWrites)
+        throw new McpToolExecutionError("Funnel draft writes are disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-writes or SAASFUNNELS_MCP_ENABLE_FUNNEL_WRITES=true.",
+          error: "Funnel draft writes are disabled by default.",
+          ok: false,
+          required_scope: "funnels:author",
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      const funnelId = uuidArg(args, "funnel_id", true);
+      return result(
+        await developerPost(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/archive`,
+          args,
+          {},
+          options,
+          "funnels:author",
+        ),
+      );
+    }
+    if (name === "get_funnel_design_reference") {
+      const topic = stringArg(args, "topic");
+      if (topic && !/^[a-z_:]{1,60}$/.test(topic))
+        throw new McpProtocolError(-32602, "topic must be an element kind such as heading, or button, presentation, step or step_design.");
+      return result(
+        await developerGet(
+          `/api/developer-tools/funnels/design-reference${topic ? `?topic=${encodeURIComponent(topic)}` : ""}`,
           args,
           options,
         ),
@@ -1977,7 +2281,8 @@ export async function callSaaSFunnelsMcpTool(
     if (
       name === "get_launch_checklist" ||
       name === "validate_funnel_draft" ||
-      name === "get_funnel_outline"
+      name === "get_funnel_outline" ||
+      name === "get_funnel_definition"
     ) {
       const funnelId = uuidArg(args, "funnel_id", true);
       const resource =
@@ -1985,8 +2290,10 @@ export async function callSaaSFunnelsMcpTool(
           ? "checklist"
           : name === "validate_funnel_draft"
             ? "validation"
-            : "outline";
-      return structuredToolResult(
+            : name === "get_funnel_definition"
+              ? "definition"
+              : "outline";
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${resource}`,
           args,
@@ -1994,7 +2301,7 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     }
-    if (name === "create_funnel_draft" || name === "apply_funnel_changes") {
+    if (name === "create_funnel_draft" || name === "apply_funnel_changes" || name === "update_funnel_draft") {
       if (!options.allowFunnelWrites) {
         throw new McpToolExecutionError("Funnel draft writes are disabled.", {
           enablement:
@@ -2009,7 +2316,7 @@ export async function callSaaSFunnelsMcpTool(
         const requestKey = uuidArg(args, "request_key", true);
         const templateKey = stringArg(args, "template_key");
         const featureKey = stringArg(args, "feature_key");
-        return structuredToolResult(
+        return result(
           await developerPost(
             "/api/developer-tools/funnels",
             args,
@@ -2017,6 +2324,35 @@ export async function callSaaSFunnelsMcpTool(
               request_key: requestKey,
               ...(templateKey ? { template_key: templateKey } : {}),
               ...(featureKey ? { feature_key: featureKey } : {}),
+            },
+            options,
+            "funnels:author",
+          ),
+        );
+      }
+      if (name === "update_funnel_draft") {
+        const funnelId = uuidArg(args, "funnel_id", true);
+        const revision = args.expected_draft_revision;
+        const definition = args.definition;
+        const patch = args.patch;
+        const hasDefinition = definition && typeof definition === "object" && !Array.isArray(definition);
+        const hasPatch = Array.isArray(patch) && patch.length > 0 && patch.length <= 200;
+        if (!Number.isInteger(revision) || Number(revision) < 0 || hasDefinition === hasPatch)
+          throw new McpProtocolError(
+            -32602,
+            "funnel_id, expected_draft_revision and either definition or patch (1–200 operations) are required.",
+          );
+        const agentName = stringArg(args, "agent_name");
+        const batchId = stringArg(args, "batch_id");
+        return result(
+          await developerPost(
+            `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/definition`,
+            args,
+            {
+              expected_draft_revision: revision,
+              ...(hasDefinition ? { definition } : { patch }),
+              ...(agentName ? { agent_name: agentName.slice(0, 60) } : {}),
+              ...(batchId ? { batch_id: batchId } : {}),
             },
             options,
             "funnels:author",
@@ -2041,7 +2377,7 @@ export async function callSaaSFunnelsMcpTool(
       }
       const agentName = stringArg(args, "agent_name");
       const batchId = stringArg(args, "batch_id");
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/changes`,
           args,
@@ -2083,7 +2419,7 @@ export async function callSaaSFunnelsMcpTool(
           "A Funnel, current draft revision, idempotency key, entry, and placement are required.",
         );
       }
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry`,
           args,
@@ -2112,7 +2448,7 @@ export async function callSaaSFunnelsMcpTool(
       const funnelId = stringArg(args, "funnel_id");
       if (!funnelId)
         throw new McpProtocolError(-32602, "funnel_id is required.");
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry/evidence`,
           args,
@@ -2146,7 +2482,7 @@ export async function callSaaSFunnelsMcpTool(
           -32602,
           "A Funnel, current draft revision, and idempotency key are required.",
         );
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry/test`,
           args,
@@ -2160,10 +2496,10 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "send_test_event")
-      return structuredToolResult(await sendTestEvent(args, options));
+      return result(await sendTestEvent(args, options));
   } catch (error) {
     if (error instanceof McpToolExecutionError)
-      return structuredToolResult(error.structuredContent, true);
+      return result(error.structuredContent, true);
     throw error;
   }
 
