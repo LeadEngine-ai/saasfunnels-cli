@@ -83,6 +83,8 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_funnel_outline: "funnel.draft.check",
   archive_funnel_draft: "funnel.draft.author",
   get_brand_kit: "funnel.draft.check",
+  list_funnel_images: "funnel.draft.check",
+  propose_brand_kit: "setup.allowed_site.propose",
   get_targeting_catalog: "funnel.draft.check",
   render_funnel: "funnel.draft.check",
   run_funnel_test: "funnel.entry.test",
@@ -373,8 +375,10 @@ export const wholeDataToolNames = new Set([
   "inspect_funnel_entry",
   "get_brand_kit",
   "get_targeting_catalog",
+  "list_funnel_images",
   "list_funnel_templates",
   "list_funnels",
+  "propose_brand_kit",
   "run_funnel_test",
   "update_funnel_draft",
   "validate_funnel_draft",
@@ -730,7 +734,9 @@ const hostedWorkspaceToolNames = new Set([
   "archive_funnel_draft",
   "get_brand_kit",
   "get_targeting_catalog",
+  "list_funnel_images",
   "list_funnel_templates",
+  "propose_brand_kit",
   "render_funnel",
   "render_funnel_step",
   "run_funnel_binding_test",
@@ -1292,6 +1298,39 @@ export function saasFunnelsMcpToolDefinitions({
       inputSchema: emptyLiveInputSchema(),
       name: "get_brand_kit",
       title: "Get Brand Kit",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Propose brand kit colors, fonts or corner style. Nothing changes: you get an approve_url where the merchant reviews and saves it in Settings → Brand, because it changes every Funnel, live ones too. Colors are hex such as #1F6FEB.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          accent_color: { type: "string" },
+          api_base_url: apiBaseUrlSchema,
+          body_font: { type: "string" },
+          corner_style: { enum: ["square", "soft", "rounded", "pill"], type: "string" },
+          heading_font: { type: "string" },
+          primary_color: { type: "string" },
+          surface_color: { type: "string" },
+          text_color: { type: "string" },
+        },
+        type: "object",
+      },
+      name: "propose_brand_kit",
+      title: "Propose Brand Kit",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "The workspace's uploaded images, 50 at a time, each with the source to place it ({ kind: \"asset\", assetId }). Any https image also works as { kind: \"external\", url }.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { after: { description: "next_cursor from the last page.", type: "string" }, api_base_url: apiBaseUrlSchema },
+        type: "object",
+      },
+      name: "list_funnel_images",
+      title: "List Funnel Images",
     },
     {
       annotations: readOnly,
@@ -2257,6 +2296,22 @@ export async function callSaaSFunnelsMcpTool(
         options,
       );
       return renderToolResult(data);
+    }
+    if (name === "propose_brand_kit") {
+      const fields = ["accent_color", "body_font", "corner_style", "heading_font", "primary_color", "surface_color", "text_color"];
+      const body = Object.fromEntries(fields.flatMap((field) => {
+        const value = stringArg(args, field);
+        return value ? [[field, value.slice(0, 40)]] : [];
+      }));
+      if (!Object.keys(body).length) throw new McpProtocolError(-32602, "Send at least one color, font or corner_style.");
+      return result(await developerPost("/api/developer-tools/funnels/brand-kit", args, body, options, "developer:read"));
+    }
+    if (name === "list_funnel_images") {
+      const after = stringArg(args, "after");
+      if (after && !uuidPattern.test(after)) throw new McpProtocolError(-32602, "after must be a next_cursor value.");
+      return result(
+        await developerGet(`/api/developer-tools/funnels/images${after ? `?after=${encodeURIComponent(after)}` : ""}`, args, options),
+      );
     }
     if (name === "get_targeting_catalog" || name === "get_brand_kit")
       return result(

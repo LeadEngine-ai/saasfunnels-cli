@@ -365,6 +365,8 @@ describe("SaaSFunnels MCP server", () => {
       "render_funnel",
       "get_targeting_catalog",
       "get_brand_kit",
+      "propose_brand_kit",
+      "list_funnel_images",
       "get_offer_catalog",
       "propose_allowed_site",
       "preview_feature_manifest",
