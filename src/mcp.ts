@@ -87,6 +87,10 @@ export const saasFunnelsMcpToolCapabilityIds = {
   list_funnel_images: "funnel.draft.check",
   propose_brand_kit: "setup.allowed_site.propose",
   get_targeting_catalog: "funnel.draft.check",
+  get_funnel_targeting: "funnel.draft.check",
+  set_funnel_targeting: "funnel.draft.author",
+  import_funnel_image: "funnel.draft.author",
+  review_offer_terms: "funnel.draft.author",
   render_funnel: "funnel.draft.check",
   run_funnel_test: "funnel.entry.test",
   render_funnel_step: "funnel.draft.check",
@@ -377,11 +381,15 @@ export const wholeDataToolNames = new Set([
   "get_brand_kit",
   "get_funnel_integrations",
   "get_targeting_catalog",
+  "get_funnel_targeting",
+  "import_funnel_image",
   "list_funnel_images",
   "list_funnel_templates",
   "list_funnels",
   "propose_brand_kit",
+  "review_offer_terms",
   "run_funnel_test",
+  "set_funnel_targeting",
   "update_funnel_draft",
   "validate_funnel_draft",
 ]);
@@ -737,13 +745,17 @@ const hostedWorkspaceToolNames = new Set([
   "get_brand_kit",
   "get_funnel_integrations",
   "get_targeting_catalog",
+  "get_funnel_targeting",
+  "import_funnel_image",
   "list_funnel_images",
   "list_funnel_templates",
   "propose_brand_kit",
   "render_funnel",
   "render_funnel_step",
+  "review_offer_terms",
   "run_funnel_binding_test",
   "run_funnel_test",
+  "set_funnel_targeting",
   "submit_funnel_entry_evidence",
   "update_funnel_draft",
   "validate_funnel_draft",
@@ -1297,6 +1309,14 @@ export function saasFunnelsMcpToolDefinitions({
     {
       annotations: readOnly,
       description:
+        "Who sees a Funnel, when it opens, on which pages and how often, as the plain answers Studio's Targeting tab shows, plus the sentence Studio writes for it. Change any of them with set_funnel_targeting.",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "get_funnel_targeting",
+      title: "Get Funnel Targeting",
+    },
+    {
+      annotations: readOnly,
+      description:
         "The workspace brand kit every Funnel uses: colors, fonts, corner style and logos. The merchant changes it in Settings → Brand (settings_url).",
       inputSchema: emptyLiveInputSchema(),
       name: "get_brand_kit",
@@ -1490,6 +1510,93 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "archive_funnel_draft",
         title: "Archive Funnel Draft",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Change who sees a Funnel draft, when it opens, where and how often, with Studio's own Targeting settings. Send only what changes; the rest stays. Keys must come from get_targeting_catalog. Saved as one batch the merchant can undo; never publishes. Example: { opens_when: { way: \"delay\", seconds: 30 }, pages: { show_on: [\"/pricing\"] }, frequency: { times: 1, per_seconds: 604800 }, audience: \"app_users\", conditions: [{ field: \"plan_name\", operator: \"equals\", value: \"Launch\" }] }.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            agent_name: { description: "Your name as the merchant should see it, such as Claude Code.", type: "string" },
+            api_base_url: apiBaseUrlSchema,
+            audience: { enum: ["everyone", "app_users", "visitors"], type: "string" },
+            conditions: {
+              description: "Audience rules: { field, operator, value, value_max? }. Replaces the rules under the audience.",
+              items: { type: "object" },
+              maxItems: 11,
+              type: "array",
+            },
+            conditions_match: { enum: ["all", "any"], type: "string" },
+            expected_draft_revision: { minimum: 0, type: "integer" },
+            frequency: {
+              description: "\"once\", \"daily\", \"always\", or { times, per_seconds (null for ever), apart_seconds }.",
+            },
+            funnel_id: { type: "string" },
+            opens_when: {
+              description:
+                "{ way: click | page | event | leave | scroll | delay | idle | feature | lifecycle | server, seconds?, percent?, event_key?, button_key?, cancel_button?, lifecycle_event_key?, server_key? }.",
+              type: "object",
+            },
+            pages: { description: "{ show_on: paths, never_on: paths }. Website pages start with /.", type: "object" },
+            priority: { type: "integer" },
+            schedule: {
+              description: "{ starts_at?, ends_at?, time_zone?, weekly?: [{ days: [1–7], from: \"09:00\", to: \"17:00\" }] }, or null to clear.",
+            },
+            skip_if_already_converted: { type: "boolean" },
+          },
+          required: ["funnel_id", "expected_draft_revision"],
+          type: "object",
+        },
+        name: "set_funnel_targeting",
+        title: "Set Funnel Targeting",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Copy a public https image (PNG, JPEG, WebP or AVIF, up to 10 MB) into the workspace's image library, checked like a Studio upload. Returns place_with ({ kind: \"asset\", assetId }) to use in a step, so the image keeps working if the original moves.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: { api_base_url: apiBaseUrlSchema, url: { type: "string" } },
+          required: ["url"],
+          type: "object",
+        },
+        name: "import_funnel_image",
+        title: "Import Funnel Image",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Check the terms customers will see for each Offer in a draft against the connected billing catalog, as Studio does. With approve: true, approves one Offer so the Funnel can publish; that needs a workspace owner or admin signed in through OAuth. Creates nothing in Stripe and changes no price.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: {
+            api_base_url: apiBaseUrlSchema,
+            approve: { type: "boolean" },
+            expected_draft_revision: { minimum: 0, type: "integer" },
+            funnel_id: { type: "string" },
+            strategy_key: { description: "One Offer's strategy key; omit to check them all.", type: "string" },
+          },
+          required: ["funnel_id", "expected_draft_revision"],
+          type: "object",
+        },
+        name: "review_offer_terms",
+        title: "Review Offer Terms",
       },
       {
         annotations: {
@@ -2348,6 +2455,50 @@ export async function callSaaSFunnelsMcpTool(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/test`,
           args,
           {},
+          options,
+          "funnels:author",
+        ),
+      );
+    }
+    if (name === "get_funnel_targeting") {
+      const funnelId = uuidArg(args, "funnel_id", true);
+      return result(
+        await developerGet(`/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/targeting`, args, options),
+      );
+    }
+    if (name === "set_funnel_targeting" || name === "import_funnel_image" || name === "review_offer_terms") {
+      if (!options.allowFunnelWrites)
+        throw new McpToolExecutionError("Funnel draft writes are disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-writes or SAASFUNNELS_MCP_ENABLE_FUNNEL_WRITES=true.",
+          error: "Funnel draft writes are disabled by default.",
+          ok: false,
+          required_scope: "funnels:author",
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      if (name === "import_funnel_image") {
+        const url = stringArg(args, "url");
+        if (!url || !url.startsWith("https://") || url.length > 2048)
+          throw new McpProtocolError(-32602, "url must be a public https address.");
+        return result(
+          await developerPost("/api/developer-tools/funnels/images", args, { url }, options, "funnels:author"),
+        );
+      }
+      const funnelId = uuidArg(args, "funnel_id", true);
+      const revision = args.expected_draft_revision;
+      if (!Number.isInteger(revision) || Number(revision) < 0)
+        throw new McpProtocolError(-32602, "expected_draft_revision is required.");
+      const fields =
+        name === "set_funnel_targeting"
+          ? ["agent_name", "audience", "batch_id", "conditions", "conditions_match", "frequency", "opens_when", "pages", "priority", "schedule", "skip_if_already_converted"]
+          : ["approve", "strategy_key"];
+      const body: JsonObject = { expected_draft_revision: revision as number };
+      for (const field of fields) if (field in args && args[field] !== undefined) body[field] = args[field];
+      return result(
+        await developerPost(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${name === "set_funnel_targeting" ? "targeting" : "offer-terms"}`,
+          args,
+          body,
           options,
           "funnels:author",
         ),

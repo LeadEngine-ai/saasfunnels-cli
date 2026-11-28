@@ -92,8 +92,11 @@ describe("SaaSFunnels MCP server", () => {
       "archive_funnel_draft",
       "confirm_event_mapping",
       "create_funnel_draft",
+      "import_funnel_image",
+      "review_offer_terms",
       "run_funnel_binding_test",
       "run_funnel_test",
+      "set_funnel_targeting",
       "submit_funnel_entry_evidence",
       "update_funnel_draft",
     ]);
@@ -197,6 +200,58 @@ describe("SaaSFunnels MCP server", () => {
     ]);
     expect(listed.structuredContent).toMatchObject({ ok: true });
     expect(detail.structuredContent).toMatchObject({ ok: true });
+  });
+
+  it("sends targeting, image and Offer terms changes to their routes (LEA-2281, LEA-2280, LEA-2282)", async () => {
+    const funnelId = "22222222-2222-4222-8222-222222222222";
+    const calls: Array<{ body: unknown; method: string; url: string }> = [];
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+        method: init?.method ?? "GET",
+        url: String(url),
+      });
+      return response({ data: { ok: true }, ok: true });
+    }) as unknown as typeof fetch;
+    const options = {
+      allowFunnelWrites: true,
+      apiBaseUrlOverride: "https://app.saasfunnels.test",
+      authorizationHeader: "Bearer hosted-oauth",
+      fetch: fetchImpl,
+      hostedMode: true,
+    };
+    await callSaaSFunnelsMcpTool("get_funnel_targeting", { funnel_id: funnelId }, options);
+    await callSaaSFunnelsMcpTool(
+      "set_funnel_targeting",
+      {
+        expected_draft_revision: 4,
+        frequency: "daily",
+        funnel_id: funnelId,
+        opens_when: { seconds: 30, way: "delay" },
+        unknown_field: "dropped",
+      },
+      options,
+    );
+    await callSaaSFunnelsMcpTool("import_funnel_image", { url: "https://example.com/shot.png" }, options);
+    await callSaaSFunnelsMcpTool(
+      "review_offer_terms",
+      { approve: true, expected_draft_revision: 5, funnel_id: funnelId },
+      options,
+    );
+    const base = "https://app.saasfunnels.test/api/developer-tools/funnels";
+    expect(calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      `GET ${base}/${funnelId}/targeting`,
+      `POST ${base}/${funnelId}/targeting`,
+      `POST ${base}/images`,
+      `POST ${base}/${funnelId}/offer-terms`,
+    ]);
+    expect(calls[1]!.body).toEqual({
+      expected_draft_revision: 4,
+      frequency: "daily",
+      opens_when: { seconds: 30, way: "delay" },
+    });
+    expect(calls[2]!.body).toEqual({ url: "https://example.com/shot.png" });
+    expect(calls[3]!.body).toEqual({ approve: true, expected_draft_revision: 5 });
   });
 
   it("rejects invalid Funnel inputs and local access before fetching", async () => {
@@ -364,6 +419,7 @@ describe("SaaSFunnels MCP server", () => {
       "render_funnel_step",
       "render_funnel",
       "get_targeting_catalog",
+      "get_funnel_targeting",
       "get_brand_kit",
       "propose_brand_kit",
       "list_funnel_images",
