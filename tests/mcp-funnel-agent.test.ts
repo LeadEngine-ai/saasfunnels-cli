@@ -182,7 +182,7 @@ describe("Funnel tools return whole data (LEA-2277)", () => {
       steps: Array.from({ length: 80 }, (_, index) => ({ key: `s${index}` })),
       studio_url: "https://app.saasfunnels.test/api/workspaces/open?workspace=ws&next=%2Fapp",
       support_email: "help@merchant.example",
-      text: "Paste sk_live_abcdefghijklmnop here",
+      text: "Paste sk_test_abcdefghijklmnop here",
     };
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({ data: payload, ok: true }), {
@@ -207,7 +207,7 @@ describe("Funnel tools return whole data (LEA-2277)", () => {
     expect(text).toContain("help@merchant.example");
     expect(text).toContain('"key":"s79"');
     expect(text).not.toContain("pv_live_supersecretvalue123");
-    expect(text).not.toContain("sk_live_abcdefghijklmnop");
+    expect(text).not.toContain("sk_test_abcdefghijklmnop");
   });
 });
 
