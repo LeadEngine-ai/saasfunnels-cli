@@ -60,6 +60,9 @@ type Options = {
   fetch?: typeof fetch;
   prompt?: (message: string) => Promise<string>;
   progress?: (message: string) => void;
+  /** Wait for Stripe and the site while the browser tab finishes them. */
+  waitForConnection?: boolean;
+  pollIntervalMs?: number;
 };
 
 export function safeRepositoryKey(remote: string) {
@@ -138,9 +141,18 @@ export async function runGuidedSetup(options: Options) {
         "The app connection is temporarily paused for corrections. Existing findings and decisions are retained. Retry when Setup is available.",
       );
     let context = contextSchema.parse(initialContext);
+    if ((!context.installationId || !context.integrationId) && options.waitForConnection) {
+      // Just signed in: the browser tab is still connecting Stripe and the site.
+      options.progress?.("Finish connecting Stripe and your site in the browser tab. Setup will continue when they're ready…");
+      const connectDeadline = Date.now() + 5 * 60_000;
+      while ((!context.installationId || !context.integrationId) && Date.now() < connectDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, options.pollIntervalMs ?? 10_000));
+        context = contextSchema.parse(await request("/api/developer-tools/setup/context"));
+      }
+    }
     if (!context.installationId || !context.integrationId)
       throw new Error(
-        "Connect Stripe and create app credentials in Setup first.",
+        `Connect Stripe and add your site in ${new URL("/app/setup", base)} first, then run setup again.`,
       );
     try {
       await exec("git", ["rev-parse", "HEAD"], { cwd: options.cwd });

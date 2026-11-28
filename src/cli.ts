@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveSetupAccess } from "./setup-access.js";
+import {
+  LOGIN_SCHEMA_VERSION,
+  deviceLogin,
+  logout,
+  readStoredCredential,
+  saveKeyToEnvFile,
+} from "./login.js";
 import { dirname, join, resolve } from "node:path";
 import { extractSetupPricing } from "./setup-pricing.js";
 import { runGuidedSetup, submitApprovedSetupPlans, safeRepositoryKey } from "./setup-run.js";
@@ -23,6 +30,7 @@ import {
 } from "./feature-setup.js";
 import {
   SAASFUNNELS_CLI_NAME,
+  SAASFUNNELS_CLI_VERSION,
   SAASFUNNELS_DEFAULT_API_BASE_URL,
   SAASFUNNELS_ENV,
   SAASFUNNELS_PRODUCT_NAME,
@@ -61,6 +69,9 @@ export type SaaSFunnelsCliOptions = {
   fs?: CliFileSystem;
   prompt?: (message: string) => Promise<string>;
   progress?: (message: string) => void;
+  /** Test hooks for browser login. */
+  openBrowser?: (url: string) => Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 export type SaaSFunnelsCliResult = {
@@ -97,6 +108,9 @@ const pathValuedKeys = new Set([
   "repositoryPath",
 ]);
 
+// Flags that never take a value, so `--json setup` keeps `setup` as a word.
+const booleanFlags = new Set(["json", "help", "version", "no-browser", "non-interactive", "resume", "send"]);
+
 function parseArgs(argv: string[]): ParsedArgs {
   const args: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -110,7 +124,9 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     const [rawName, inlineValue] = value.slice(2).split("=", 2);
     const next = argv[index + 1];
-    if (inlineValue !== undefined) {
+    if (inlineValue === undefined && booleanFlags.has(rawName)) {
+      flags[rawName] = true;
+    } else if (inlineValue !== undefined) {
       flags[rawName] = inlineValue;
     } else if (next && !next.startsWith("--")) {
       flags[rawName] = next;
@@ -188,6 +204,9 @@ function usage() {
   return `${SAASFUNNELS_PRODUCT_NAME} CLI
 
 Usage:
+  ${SAASFUNNELS_CLI_NAME} login [--no-browser] [--save-env .env.local] [--json]
+  ${SAASFUNNELS_CLI_NAME} logout
+  ${SAASFUNNELS_CLI_NAME} whoami [--json]
   ${SAASFUNNELS_CLI_NAME} setup [--resume] [--env-file <path>]
   ${SAASFUNNELS_CLI_NAME} setup run [--resume] [--send] [--non-interactive]
   ${SAASFUNNELS_CLI_NAME} init [--api-base-url <url>] [--force]
@@ -211,7 +230,7 @@ Usage:
   ${SAASFUNNELS_CLI_NAME} mcp serve [--enable-funnel-writes] [--enable-send-test-event]
 
 Environment:
-  SAASFUNNELS_API_KEY          developer:read key for doctor/readiness/live verify
+  SAASFUNNELS_API_KEY          developer:read key for doctor/readiness/live verify; overrides saasfunnels login
   SAASFUNNELS_INGEST_API_KEY   direct:write or events:write key for send-test
   SAASFUNNELS_FUNNELS_SERVER_KEY  Test server key for Feature decisions; never expose it to a browser
   SAASFUNNELS_API_BASE_URL     defaults to ${SAASFUNNELS_DEFAULT_API_BASE_URL}; override for localhost, previews, or rollback
@@ -793,10 +812,12 @@ async function developerGet(
   options: SaaSFunnelsCliOptions,
 ) {
   const key =
-    envValue(options, SAASFUNNELS_ENV.apiKey) ?? flagString(flags, "api-key");
+    envValue(options, SAASFUNNELS_ENV.apiKey) ??
+    flagString(flags, "api-key") ??
+    (await readStoredCredential(env(options), apiBaseUrl(options, flags)))?.api_key;
   if (!key)
     throw new Error(
-      "Missing SAASFUNNELS_API_KEY for live developer diagnostics.",
+      "Missing SAASFUNNELS_API_KEY for live developer diagnostics. Run saasfunnels login to sign in.",
     );
 
   const response = await (options.fetch ?? fetch)(
@@ -1373,6 +1394,64 @@ async function commandPlans(
   return result(2, "", `Unknown plans command.\n\n${usage()}`);
 }
 
+async function runLogin(
+  flags: ParsedArgs["flags"],
+  options: SaaSFunnelsCliOptions,
+): Promise<{ ok: true; key: string; printed: string } | { ok: false; result: SaaSFunnelsCliResult }> {
+  const json = jsonMode(flags);
+  const lines: string[] = [];
+  const progress = (line: string) => (options.progress ? options.progress(line) : lines.push(line));
+  const login = await deviceLogin({
+    apiBaseUrl: apiBaseUrl(options, flags),
+    cwd: cwd(options),
+    env: env(options),
+    fetch: options.fetch,
+    // A person at a terminal; agents and CI get a bounded wait instead.
+    interactive: Boolean(options.prompt) && !json,
+    json,
+    noBrowser: hasFlag(flags, "no-browser"),
+    openBrowser: options.openBrowser,
+    progress,
+    sleep: options.sleep,
+  });
+  const printed = lines.length ? lines.join("\n") + "\n" : "";
+  if (login.ok) {
+    const saveEnv = flagString(flags, "save-env");
+    if (saveEnv) {
+      const saved = await saveKeyToEnvFile(cwd(options), saveEnv, login.key);
+      progress(json ? JSON.stringify({ schema_version: LOGIN_SCHEMA_VERSION, event: saved.ok ? "env_saved" : "env_not_saved", message: saved.message }) : saved.message);
+    }
+    return { ok: true, key: login.key, printed: lines.length ? lines.join("\n") + "\n" : "" };
+  }
+  if (login.pending) {
+    const out = json
+      ? JSON.stringify({ schema_version: LOGIN_SCHEMA_VERSION, event: "login_pending", next_action: login.message }) + "\n"
+      : login.message + "\n";
+    return { ok: false, result: result(2, printed + (json ? out : ""), json ? "" : out) };
+  }
+  const failure = json
+    ? JSON.stringify({ schema_version: LOGIN_SCHEMA_VERSION, event: "error", code: login.code, message: login.message, next_action: login.nextAction }) + "\n"
+    : `${login.message} ${login.nextAction}\n`;
+  return { ok: false, result: result(1, printed + (json ? failure : ""), json ? "" : failure) };
+}
+
+async function commandWhoami(flags: ParsedArgs["flags"], options: SaaSFunnelsCliOptions) {
+  const base = apiBaseUrl(options, flags);
+  const stored = await readStoredCredential(env(options), base);
+  const fromEnv = Boolean(envValue(options, SAASFUNNELS_ENV.apiKey));
+  if (!fromEnv && !stored) {
+    const text = "Not signed in. Run saasfunnels login.";
+    return result(1, jsonMode(flags) ? JSON.stringify({ schema_version: LOGIN_SCHEMA_VERSION, event: "whoami", signed_in: false }) + "\n" : "", jsonMode(flags) ? "" : text + "\n");
+  }
+  const workspace = await developerGet("/api/developer-tools/workspace", flags, options).catch(() => null) as Record<string, unknown> | null;
+  const nested = workspace && typeof workspace.workspace === "object" && workspace.workspace ? workspace.workspace as Record<string, unknown> : workspace;
+  const name = typeof nested?.name === "string" ? nested.name : stored?.workspace_name ?? "";
+  const keyName = fromEnv ? "SAASFUNNELS_API_KEY" : stored?.key_name ?? "CLI";
+  if (jsonMode(flags))
+    return result(0, JSON.stringify({ schema_version: LOGIN_SCHEMA_VERSION, event: "whoami", signed_in: true, key_valid: Boolean(workspace), workspace: { name }, key_name: keyName }) + "\n");
+  return result(workspace ? 0 : 1, workspace ? `Workspace: ${name}\nKey: ${keyName}\n` : "", workspace ? "" : `Your key isn't working anymore. Run saasfunnels login.\n`);
+}
+
 export async function runSaaSFunnelsCli(
   argv: string[],
   options: SaaSFunnelsCliOptions = {},
@@ -1381,17 +1460,51 @@ export async function runSaaSFunnelsCli(
   const [command, ...args] = parsed.args;
 
   try {
+    if (!command && hasFlag(parsed.flags, "version"))
+      return result(0, `${SAASFUNNELS_CLI_VERSION}\n`);
     if (!command || command === "help" || command === "--help")
       return result(0, usage());
+    if (command === "version") return result(0, `${SAASFUNNELS_CLI_VERSION}\n`);
     if (command === "init") return await commandInit(parsed.flags, options);
+    if (command === "login") {
+      const login = await runLogin(parsed.flags, options);
+      return login.ok ? result(0, login.printed) : login.result;
+    }
+    if (command === "logout") {
+      const out = await logout({ apiBaseUrl: apiBaseUrl(options, parsed.flags), env: env(options), fetch: options.fetch });
+      const text = !out.signedIn ? "You weren't signed in.\n" : out.revoked ? "Signed out. The key was revoked.\n" : "Signed out on this computer. Revoke the key in SaaSFunnels → Settings → API keys if it's still listed.\n";
+      return result(0, jsonMode(parsed.flags) ? JSON.stringify({ schema_version: LOGIN_SCHEMA_VERSION, event: "logout", ...out }) + "\n" : text);
+    }
+    if (command === "whoami") return await commandWhoami(parsed.flags, options);
     if (command === "setup") {
       const help = "SaaSFunnels setup\n\nRun npx --yes saasfunnels@latest setup in your app repository.\nIt checks access, asks before sending findings, and discovers features and plans for review.\nUse --resume after an interruption, or --env-file .env.local to load developer access.\nFor automation, supply SAASFUNNELS_API_KEY and explicit upload approval with --send --non-interactive.\nApp implementation, deployment and payment verification remain in https://app.saasfunnels.com/app/setup.\n";
       if (hasFlag(parsed.flags, "help") || args[0] === "help") return result(0, help);
       if (args.length > 1 || (args[0] && args[0] !== "run")) return result(2, "", help);
       const interactive = !jsonMode(parsed.flags) && !hasFlag(parsed.flags, "non-interactive");
-      const access = await resolveSetupAccess({ cwd: cwd(options), key: envValue(options, SAASFUNNELS_ENV.apiKey), envFile: flagString(parsed.flags, "env-file"), prompt: interactive ? options.prompt : undefined });
-      if (!access.key) return result(2, "", access.error + "\n");
-      return runGuidedSetup({ cwd: cwd(options), apiBaseUrl: apiBaseUrl(options, parsed.flags), key: access.key, send: hasFlag(parsed.flags, "send"), resume: hasFlag(parsed.flags, "resume"), fetch: options.fetch, prompt: interactive ? options.prompt : undefined, progress: jsonMode(parsed.flags) ? undefined : options.progress });
+      const base = apiBaseUrl(options, parsed.flags);
+      const stored = envValue(options, SAASFUNNELS_ENV.apiKey) || flagString(parsed.flags, "env-file")
+        ? null
+        : await readStoredCredential(env(options), base);
+      const access = await resolveSetupAccess({
+        allowLogin: !hasFlag(parsed.flags, "non-interactive") && !env(options).CI,
+        cwd: cwd(options),
+        envFile: flagString(parsed.flags, "env-file"),
+        key: envValue(options, SAASFUNNELS_ENV.apiKey) ?? stored?.api_key,
+        prompt: interactive ? options.prompt : undefined,
+      });
+      let key = access.key;
+      let signedInNow = false;
+      let printed = "";
+      if (!key && access.login) {
+        const login = await runLogin(parsed.flags, options);
+        if (!login.ok) return login.result;
+        key = login.key;
+        printed = login.printed;
+        signedInNow = true;
+      }
+      if (!key) return result(2, "", access.error + "\n");
+      const setup = await runGuidedSetup({ cwd: cwd(options), apiBaseUrl: base, key, send: hasFlag(parsed.flags, "send"), resume: hasFlag(parsed.flags, "resume"), fetch: options.fetch, prompt: interactive ? options.prompt : undefined, progress: jsonMode(parsed.flags) ? undefined : options.progress, waitForConnection: signedInNow });
+      return printed ? { ...setup, stdout: printed + setup.stdout } : setup;
     }
     if (command === "agent")
       return await commandAgentInstall(args, parsed.flags, options);
