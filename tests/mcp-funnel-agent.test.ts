@@ -170,3 +170,43 @@ describe("Funnel playbooks and setup tools (LEA-2260, LEA-2263)", () => {
     ]);
   });
 });
+
+describe("Funnel tools return whole data (LEA-2277)", () => {
+  it("keeps deep routes, links, long lists and install keys, and still redacts secrets", async () => {
+    let deep: Record<string, unknown> = { kind: "step", stepKey: "thanks" };
+    for (let level = 0; level < 12; level += 1) deep = { next: deep };
+    const payload = {
+      install_codes: [{ client_key: "pv_web_abcdefghijklmnopqrstuvwxyz012345" }],
+      outline: { routes: deep },
+      server_key: "pv_live_supersecretvalue123",
+      steps: Array.from({ length: 80 }, (_, index) => ({ key: `s${index}` })),
+      studio_url: "https://app.saasfunnels.test/api/workspaces/open?workspace=ws&next=%2Fapp",
+      support_email: "help@merchant.example",
+      text: "Paste sk_live_abcdefghijklmnop here",
+    };
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ data: payload, ok: true }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    ) as unknown as typeof fetch;
+    const result = (await callSaaSFunnelsMcpTool(
+      "get_funnel_outline",
+      { funnel_id: funnelId },
+      {
+        apiBaseUrlOverride: "https://app.saasfunnels.test",
+        env: { SAASFUNNELS_API_KEY: "sf_test_key_value" },
+        fetch: fetchImpl,
+      },
+    )) as { structuredContent: Record<string, unknown> };
+    const text = JSON.stringify(result.structuredContent);
+    expect(text).toContain('"stepKey":"thanks"');
+    expect(text).not.toContain("truncated-depth");
+    expect(text).toContain("pv_web_abcdefghijklmnopqrstuvwxyz012345");
+    expect(text).toContain("workspace=ws&next=%2Fapp");
+    expect(text).toContain("help@merchant.example");
+    expect(text).toContain('"key":"s79"');
+    expect(text).not.toContain("pv_live_supersecretvalue123");
+    expect(text).not.toContain("sk_live_abcdefghijklmnop");
+  });
+});

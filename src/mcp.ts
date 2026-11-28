@@ -328,6 +328,73 @@ function sanitizeJson(value: unknown, key = "", depth = 0): unknown {
   );
 }
 
+/* Funnel tools return whole data: a Funnel's steps, routes, links and
+   install keys are what an agent edits (LEA-2277). Only real secrets are
+   redacted, by exact field name or by a secret-key prefix. */
+const funnelSecretKeys = new Set([
+  "access_token",
+  "api_key",
+  "apikey",
+  "authorization",
+  "client_secret",
+  "cookie",
+  "password",
+  "refresh_token",
+  "secret",
+  "secret_key",
+  "server_key",
+  "set-cookie",
+  "signing_secret",
+  "webhook_secret",
+]);
+const funnelSecretValuePattern =
+  /\b((?:sk|rk|whsec)_(?:live|test)?_?[A-Za-z0-9]{8,}|pv_live_[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|gh[pousr]_[A-Za-z0-9]{20,})\b/g;
+
+export const wholeDataToolNames = new Set([
+  "apply_funnel_changes",
+  "create_funnel_draft",
+  "get_funnel_command_schema",
+  "get_funnel_definition",
+  "get_funnel_outline",
+  "get_funnel_state",
+  "get_install_status",
+  "get_launch_checklist",
+  "get_offer_catalog",
+  "inspect_funnel_entry",
+  "list_funnel_templates",
+  "list_funnels",
+  "update_funnel_draft",
+  "validate_funnel_draft",
+]);
+
+export function sanitizeFunnelJson(value: unknown, key = "", depth = 0): unknown {
+  if (depth > 64) return "[truncated-depth]";
+  if (typeof value === "string") {
+    if (funnelSecretKeys.has(key.toLowerCase())) return "[redacted]";
+    return value.replace(funnelSecretValuePattern, "[redacted-token]");
+  }
+  if (Array.isArray(value))
+    return value.map((item) => sanitizeFunnelJson(item, key, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as JsonObject).map(([nestedKey, nestedValue]) => [
+      nestedKey,
+      sanitizeFunnelJson(nestedValue, nestedKey, depth + 1),
+    ]),
+  );
+}
+
+function funnelToolResult(data: unknown, isError = false) {
+  const structuredContent = saasFunnelsPublicValue(
+    sanitizeFunnelJson(data),
+  ) as JsonObject;
+  return {
+    content: [{ text: JSON.stringify(structuredContent), type: "text" }],
+    isError,
+    structuredContent,
+  };
+}
+
 function saasFunnelsPublicValue(value: unknown): unknown {
   if (typeof value === "string") return saasFunnelsPublicText(value);
   if (Array.isArray(value)) return value.map(saasFunnelsPublicValue);
@@ -1604,6 +1671,10 @@ export async function callSaaSFunnelsMcpTool(
   args: JsonObject,
   options: SaaSFunnelsMcpOptions = {},
 ) {
+  const result = (data: unknown, isError = false) =>
+    wholeDataToolNames.has(name)
+      ? funnelToolResult(data, isError)
+      : structuredToolResult(data, isError);
   try {
     if (!options.hostedMode && "workspace_id" in args && hostedWorkspaceToolNames.has(name)) {
       throw new McpProtocolError(
@@ -1635,7 +1706,7 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "validate_event_payload") {
-      return structuredToolResult(
+      return result(
         validateDeveloperToolEventPayload({
           payload: objectArg(args, "payload"),
           source: sourceArg(args),
@@ -1644,7 +1715,7 @@ export async function callSaaSFunnelsMcpTool(
     }
 
     if (name === "validate_feature_catalog_manifest") {
-      return structuredToolResult(
+      return result(
         validateFeatureCatalogManifest(objectArg(args, "manifest")),
       );
     }
@@ -1664,7 +1735,7 @@ export async function callSaaSFunnelsMcpTool(
         stringArg(args, "endpoint") ??
         `${apiBaseUrl(options, args)}/api/events/ingest`;
       const artifacts = getDeveloperToolAgentHandoffArtifacts({ endpoint });
-      return structuredToolResult(
+      return result(
         saasFunnelsPublicValue(
           artifacts[target as keyof typeof artifacts],
         ) as JsonObject,
@@ -1672,7 +1743,7 @@ export async function callSaaSFunnelsMcpTool(
     }
 
     if (name === "get_integration_health")
-      return structuredToolResult(
+      return result(
         await developerGet(
           "/api/developer-tools/integrations/health",
           args,
@@ -1680,7 +1751,7 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     if (name === "list_workspaces")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/workspaces", {}, options),
       );
     if (name === "list_funnels") {
@@ -1706,13 +1777,13 @@ export async function callSaaSFunnelsMcpTool(
         limit: String(limit),
         offset: String(offset),
       });
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/funnels?${query}`, args, options),
       );
     }
     if (name === "get_funnel_state") {
       const funnelId = uuidArg(args, "funnel_id", true);
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}`,
           args,
@@ -1742,14 +1813,14 @@ export async function callSaaSFunnelsMcpTool(
         }
         query.set("attribution_role", attributionRole);
       }
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/results?${query}`, args, options),
       );
     }
     if (name === "get_funnel_results") {
       const funnelId = uuidArg(args, "funnel_id", true);
       const query = new URLSearchParams({ window: resultsWindowArg(args) });
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/results?${query}`,
           args,
@@ -1773,14 +1844,14 @@ export async function callSaaSFunnelsMcpTool(
         query.set("state", state);
       }
       const resource = name === "list_leads" ? "leads" : "opportunities";
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/${resource}?${query}`, args, options),
       );
     }
     if (name === "get_opportunity" || name === "get_lead") {
       const resource = name === "get_lead" ? "leads" : "opportunities";
       const id = uuidArg(args, name === "get_lead" ? "lead_id" : "opportunity_id", true);
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/${resource}/${encodeURIComponent(id)}`,
           args,
@@ -1789,7 +1860,7 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "get_workspace_readiness")
-      return structuredToolResult(
+      return result(
         await developerGet(
           "/api/developer-tools/signals/readiness",
           args,
@@ -1797,11 +1868,11 @@ export async function callSaaSFunnelsMcpTool(
         ),
       );
     if (name === "list_mapping_gaps")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/mappings/gaps", args, options),
       );
     if (name === "list_recent_signals")
-      return structuredToolResult(
+      return result(
         await developerGet(
           "/api/developer-tools/signals/recent",
           args,
@@ -1812,7 +1883,7 @@ export async function callSaaSFunnelsMcpTool(
       const signalId = stringArg(args, "signal_id");
       if (!signalId)
         throw new McpProtocolError(-32602, "signal_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/signals/${encodeURIComponent(signalId)}/payload-preview`,
           args,
@@ -1824,7 +1895,7 @@ export async function callSaaSFunnelsMcpTool(
       const accountId = stringArg(args, "account_id");
       if (!accountId)
         throw new McpProtocolError(-32602, "account_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/accounts/${encodeURIComponent(accountId)}/strategy`,
           args,
@@ -1836,7 +1907,7 @@ export async function callSaaSFunnelsMcpTool(
       const accountId = stringArg(args, "account_id");
       if (!accountId)
         throw new McpProtocolError(-32602, "account_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/accounts/${encodeURIComponent(accountId)}/funnel-fit`,
           args,
@@ -1848,7 +1919,7 @@ export async function callSaaSFunnelsMcpTool(
       const funnelId = stringArg(args, "funnel_id");
       if (!funnelId)
         throw new McpProtocolError(-32602, "funnel_id is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry`,
           args,
@@ -1870,7 +1941,7 @@ export async function callSaaSFunnelsMcpTool(
           "funnel_id, intent, and entry_kind event|api are required.",
         );
       }
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry/plan`,
           args,
@@ -1892,12 +1963,12 @@ export async function callSaaSFunnelsMcpTool(
     if (name === "propose_allowed_site") {
       const site = stringArg(args, "site");
       if (!site || site.length > 300) throw new McpProtocolError(-32602, "site is required.");
-      return structuredToolResult(
+      return result(
         await developerGet(`/api/developer-tools/setup/allowed-sites?site=${encodeURIComponent(site)}`, args, options),
       );
     }
     if (name === "preview_feature_manifest")
-      return structuredToolResult(
+      return result(
         await developerPost(
           "/api/developer-tools/features/instrumentation/preview",
           args,
@@ -1917,7 +1988,7 @@ export async function callSaaSFunnelsMcpTool(
         });
       }
       if (name === "submit_feature_manifest")
-        return structuredToolResult(
+        return result(
           await developerPost(
             "/api/developer-tools/features/instrumentation",
             args,
@@ -1933,7 +2004,7 @@ export async function callSaaSFunnelsMcpTool(
         throw new McpProtocolError(-32602, "source, raw_event_name and semantic_type are required.");
       const status = stringArg(args, "status");
       const eventKind = stringArg(args, "event_kind");
-      return structuredToolResult(
+      return result(
         await developerPost(
           "/api/developer-tools/mappings/confirm",
           args,
@@ -1950,15 +2021,15 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "list_funnel_templates")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/funnels/templates", args, options),
       );
     if (name === "get_install_status")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/setup/install-status", args, options),
       );
     if (name === "get_offer_catalog")
-      return structuredToolResult(
+      return result(
         await developerGet("/api/developer-tools/offers", args, options),
       );
     if (name === "get_funnel_command_schema") {
@@ -1966,7 +2037,7 @@ export async function callSaaSFunnelsMcpTool(
       if (type && !/^[a-z_]{1,60}$/.test(type)) {
         throw new McpProtocolError(-32602, "type must be a command type such as set_step.");
       }
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/command-schema${type ? `?type=${encodeURIComponent(type)}` : ""}`,
           args,
@@ -1986,7 +2057,7 @@ export async function callSaaSFunnelsMcpTool(
           : name === "validate_funnel_draft"
             ? "validation"
             : "outline";
-      return structuredToolResult(
+      return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${resource}`,
           args,
@@ -2009,7 +2080,7 @@ export async function callSaaSFunnelsMcpTool(
         const requestKey = uuidArg(args, "request_key", true);
         const templateKey = stringArg(args, "template_key");
         const featureKey = stringArg(args, "feature_key");
-        return structuredToolResult(
+        return result(
           await developerPost(
             "/api/developer-tools/funnels",
             args,
@@ -2041,7 +2112,7 @@ export async function callSaaSFunnelsMcpTool(
       }
       const agentName = stringArg(args, "agent_name");
       const batchId = stringArg(args, "batch_id");
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/changes`,
           args,
@@ -2083,7 +2154,7 @@ export async function callSaaSFunnelsMcpTool(
           "A Funnel, current draft revision, idempotency key, entry, and placement are required.",
         );
       }
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry`,
           args,
@@ -2112,7 +2183,7 @@ export async function callSaaSFunnelsMcpTool(
       const funnelId = stringArg(args, "funnel_id");
       if (!funnelId)
         throw new McpProtocolError(-32602, "funnel_id is required.");
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry/evidence`,
           args,
@@ -2146,7 +2217,7 @@ export async function callSaaSFunnelsMcpTool(
           -32602,
           "A Funnel, current draft revision, and idempotency key are required.",
         );
-      return structuredToolResult(
+      return result(
         await developerPost(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/entry/test`,
           args,
@@ -2160,10 +2231,10 @@ export async function callSaaSFunnelsMcpTool(
       );
     }
     if (name === "send_test_event")
-      return structuredToolResult(await sendTestEvent(args, options));
+      return result(await sendTestEvent(args, options));
   } catch (error) {
     if (error instanceof McpToolExecutionError)
-      return structuredToolResult(error.structuredContent, true);
+      return result(error.structuredContent, true);
     throw error;
   }
 
