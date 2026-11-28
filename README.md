@@ -65,7 +65,7 @@ approved set is reviewable.
 - uses: LeadEngine-ai/saasfunnels-cli/action@v0.7.0
   with:
     api-key: ${{ secrets.SAASFUNNELS_API_KEY }}
-    cli-version: 0.7.0 # pin it; a floating version rebaselines drift
+    cli-version: 0.8.0 # pin it; a floating version rebaselines drift
     discovery-roots: app,lib
 ```
 
