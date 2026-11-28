@@ -73,7 +73,7 @@ try {
         'import { hostedSaaSFunnelsMcpToolDefinitions, SAASFUNNELS_CLI_VERSION } from "saasfunnels/library";',
         "const tools = hostedSaaSFunnelsMcpToolDefinitions();",
         `if (SAASFUNNELS_CLI_VERSION !== ${JSON.stringify(manifest.version)}) throw new Error("Unexpected library version");`,
-        'const allowedWrites = ["apply_funnel_changes", "apply_funnel_entry", "archive_funnel_draft", "confirm_event_mapping", "create_funnel_draft", "run_funnel_binding_test", "submit_funnel_entry_evidence", "update_funnel_draft"]; const writes = tools.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name).sort(); if (!tools.length || JSON.stringify(writes) !== JSON.stringify(allowedWrites)) throw new Error("Unsafe hosted library registry");',
+        'const allowedWrites = ["apply_funnel_changes", "apply_funnel_entry", "archive_funnel_draft", "confirm_event_mapping", "create_funnel_draft", "run_funnel_binding_test", "run_funnel_test", "submit_funnel_entry_evidence", "update_funnel_draft"]; const writes = tools.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name).sort(); if (!tools.length || JSON.stringify(writes) !== JSON.stringify(allowedWrites)) throw new Error("Unsafe hosted library registry");',
         'process.stdout.write(JSON.stringify({ library: "passed", tools: tools.length }));',
       ].join(" "),
     ],

@@ -93,6 +93,7 @@ describe("SaaSFunnels MCP server", () => {
       "confirm_event_mapping",
       "create_funnel_draft",
       "run_funnel_binding_test",
+      "run_funnel_test",
       "submit_funnel_entry_evidence",
       "update_funnel_draft",
     ]);

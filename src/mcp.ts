@@ -85,6 +85,7 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_brand_kit: "funnel.draft.check",
   get_targeting_catalog: "funnel.draft.check",
   render_funnel: "funnel.draft.check",
+  run_funnel_test: "funnel.entry.test",
   render_funnel_step: "funnel.draft.check",
   update_funnel_draft: "funnel.draft.author",
   get_install_status: "developer.workspace.read",
@@ -374,6 +375,7 @@ export const wholeDataToolNames = new Set([
   "get_targeting_catalog",
   "list_funnel_templates",
   "list_funnels",
+  "run_funnel_test",
   "update_funnel_draft",
   "validate_funnel_draft",
 ]);
@@ -732,6 +734,7 @@ const hostedWorkspaceToolNames = new Set([
   "render_funnel",
   "render_funnel_step",
   "run_funnel_binding_test",
+  "run_funnel_test",
   "submit_funnel_entry_evidence",
   "update_funnel_draft",
   "validate_funnel_draft",
@@ -1437,6 +1440,24 @@ export function saasFunnelsMcpToolDefinitions({
         },
         name: "archive_funnel_draft",
         title: "Archive Funnel Draft",
+      },
+      {
+        annotations: {
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+          readOnlyHint: false,
+        },
+        description:
+          "Run Studio's test on the current draft: five audience and customer-view cases through the production renderer. A pass is what Publish needs. Returns passed, the problems to fix, and ready_to_publish. Run it after your last edit.",
+        inputSchema: {
+          additionalProperties: false,
+          properties: { api_base_url: apiBaseUrlSchema, funnel_id: { type: "string" } },
+          required: ["funnel_id"],
+          type: "object",
+        },
+        name: "run_funnel_test",
+        title: "Run Funnel Test",
       },
       {
         annotations: {
@@ -2245,6 +2266,27 @@ export async function callSaaSFunnelsMcpTool(
           options,
         ),
       );
+    if (name === "run_funnel_test") {
+      if (!options.allowFunnelTests)
+        throw new McpToolExecutionError("Funnel Test is disabled.", {
+          enablement:
+            "Start the MCP server with --enable-funnel-tests or SAASFUNNELS_MCP_ENABLE_FUNNEL_TESTS=true.",
+          error: "Funnel Test is disabled by default.",
+          ok: false,
+          required_scope: "funnels:author",
+          schema_version: DEVELOPER_TOOLS_CONTRACT_SCHEMA_VERSION,
+        });
+      const funnelId = uuidArg(args, "funnel_id", true);
+      return result(
+        await developerPost(
+          `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/test`,
+          args,
+          {},
+          options,
+          "funnels:author",
+        ),
+      );
+    }
     if (name === "archive_funnel_draft") {
       if (!options.allowFunnelWrites)
         throw new McpToolExecutionError("Funnel draft writes are disabled.", {
