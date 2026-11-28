@@ -83,6 +83,7 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_funnel_outline: "funnel.draft.check",
   archive_funnel_draft: "funnel.draft.author",
   get_brand_kit: "funnel.draft.check",
+  get_funnel_integrations: "funnel.draft.check",
   list_funnel_images: "funnel.draft.check",
   propose_brand_kit: "setup.allowed_site.propose",
   get_targeting_catalog: "funnel.draft.check",
@@ -374,6 +375,7 @@ export const wholeDataToolNames = new Set([
   "get_offer_catalog",
   "inspect_funnel_entry",
   "get_brand_kit",
+  "get_funnel_integrations",
   "get_targeting_catalog",
   "list_funnel_images",
   "list_funnel_templates",
@@ -733,6 +735,7 @@ const hostedWorkspaceToolNames = new Set([
   "get_offer_catalog",
   "archive_funnel_draft",
   "get_brand_kit",
+  "get_funnel_integrations",
   "get_targeting_catalog",
   "list_funnel_images",
   "list_funnel_templates",
@@ -1331,6 +1334,14 @@ export function saasFunnelsMcpToolDefinitions({
       },
       name: "list_funnel_images",
       title: "List Funnel Images",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "Where a Funnel sends answers, Leads and Opportunity stages (Slack, HubSpot, Attio, Customer.io, webhooks, email), and the workspace's connected tools. Routes apply to live Funnels and send customer data, so the merchant changes them in Studio (change_in).",
+      inputSchema: funnelIdInput("Funnel ID."),
+      name: "get_funnel_integrations",
+      title: "Get Funnel Integrations",
     },
     {
       annotations: readOnly,
@@ -2379,7 +2390,8 @@ export async function callSaaSFunnelsMcpTool(
       name === "get_launch_checklist" ||
       name === "validate_funnel_draft" ||
       name === "get_funnel_outline" ||
-      name === "get_funnel_definition"
+      name === "get_funnel_definition" ||
+      name === "get_funnel_integrations"
     ) {
       const funnelId = uuidArg(args, "funnel_id", true);
       const resource =
@@ -2389,7 +2401,9 @@ export async function callSaaSFunnelsMcpTool(
             ? "validation"
             : name === "get_funnel_definition"
               ? "definition"
-              : "outline";
+              : name === "get_funnel_integrations"
+                ? "integrations"
+                : "outline";
       return result(
         await developerGet(
           `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/${resource}`,
