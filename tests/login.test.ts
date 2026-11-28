@@ -41,7 +41,8 @@ describe("saasfunnels login", () => {
   beforeEach(async () => {
     cwd = await mkdtemp(join(tmpdir(), "sf-login-"));
     configDir = await mkdtemp(join(tmpdir(), "sf-config-"));
-    env = { SAASFUNNELS_API_BASE_URL: base, SAASFUNNELS_CONFIG_DIR: configDir };
+    // DISPLAY: Linux CI has no display, and the CLI skips the browser without one.
+    env = { DISPLAY: ":0", SAASFUNNELS_API_BASE_URL: base, SAASFUNNELS_CONFIG_DIR: configDir };
     clock = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => clock);
   });
