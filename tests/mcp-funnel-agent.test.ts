@@ -210,3 +210,41 @@ describe("Funnel tools return whole data (LEA-2277)", () => {
     expect(text).not.toContain("sk_live_abcdefghijklmnop");
   });
 });
+
+describe("step renders (LEA-2279)", () => {
+  it("returns rendered steps as image content without bytes in the summary", async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      calls.push(String(url));
+      return new Response(
+        JSON.stringify({
+          data: {
+            images: [{ data_base64: "iVBORw0KGgo=", device: "desktop", mime_type: "image/png", step_key: "ask" }],
+            ok: true,
+            problems: [],
+          },
+          ok: true,
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const result = (await callSaaSFunnelsMcpTool(
+      "render_funnel_step",
+      { device: "both", funnel_id: funnelId, step_key: "ask" },
+      {
+        apiBaseUrlOverride: "https://app.saasfunnels.test",
+        env: { SAASFUNNELS_API_KEY: "sf_test_key_value" },
+        fetch: fetchImpl,
+      },
+    )) as { content: Array<Record<string, string>>; structuredContent: Record<string, unknown> };
+    expect(calls[0]).toBe(
+      `https://app.saasfunnels.test/api/developer-tools/funnels/${funnelId}/render?device=both&step_key=ask`,
+    );
+    expect(result.content.find((item) => item.type === "image")).toEqual({
+      data: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      type: "image",
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain("iVBORw0KGgo=");
+  });
+});

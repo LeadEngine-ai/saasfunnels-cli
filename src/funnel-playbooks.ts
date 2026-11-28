@@ -13,6 +13,7 @@ export type SaaSFunnelsPlaybook = {
 const rules = `Rules:
 - You edit drafts only. Never try to publish or delete; hand the merchant the Studio link (studio_url) to publish.
 - To change anything in a draft, read it with get_funnel_definition, edit the JSON, and send it back with update_funnel_draft (the whole definition or a JSON Patch) and the draft_revision you read. On a revision conflict, read again and retry. Nothing saves if any part is refused.
+- After a design change, look at it with render_funnel_step (or render_funnel for the whole journey) before you say it's done.
 - get_funnel_design_reference lists every element kind, layout option, surface and built-in image with a working example; ask for a topic to get its full schema.
 - For a single small edit you can also use apply_funnel_changes with commands from get_funnel_command_schema.
 - Set agent_name to your name (for example "Claude Code") so the merchant sees who changed what in Studio.
@@ -78,8 +79,9 @@ export const saasFunnelsPlaybooks: SaaSFunnelsPlaybook[] = [
 2. If you need an element, layout or style you haven't seen, call get_funnel_design_reference (with a topic for its full schema).
 3. If the change involves an Offer, call get_offer_catalog and use its plans, prices and plan_map. New discounts are prepared in the draft and created by the merchant in Studio.
 4. Make every edit in the JSON and send it with update_funnel_draft. If it returns not_applied paths, make those with apply_funnel_changes or tell the merchant.
-5. Call get_funnel_outline and validate_funnel_draft to check the result; fix anything that blocks publishing.
-6. Tell the merchant what changed and give them the studio_url to review, undo or publish.
+5. Call render_funnel_step for each step you changed (device both) and look at it. Fix anything that looks wrong: clipped or crowded text, weak contrast, a layout that breaks on mobile. Repeat until it looks right.
+6. Call validate_funnel_draft; fix anything that blocks publishing.
+7. Tell the merchant what changed and give them the studio_url to review, undo or publish.
 
 ${rules}`,
     title: "Edit a Funnel",

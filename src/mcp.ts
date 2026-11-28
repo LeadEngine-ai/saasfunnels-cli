@@ -81,6 +81,8 @@ export const saasFunnelsMcpToolCapabilityIds = {
   get_funnel_definition: "funnel.draft.check",
   get_funnel_design_reference: "funnel.draft.check",
   get_funnel_outline: "funnel.draft.check",
+  render_funnel: "funnel.draft.check",
+  render_funnel_step: "funnel.draft.check",
   update_funnel_draft: "funnel.draft.author",
   get_install_status: "developer.workspace.read",
   get_launch_checklist: "funnel.draft.check",
@@ -399,6 +401,27 @@ function funnelToolResult(data: unknown, isError = false) {
   };
 }
 
+type RenderedImage = { data_base64?: unknown; mime_type?: unknown; step_key?: unknown; device?: unknown };
+
+/* Step renders come back as MCP image content the agent can look at; the
+   structured result keeps everything but the image bytes (LEA-2279). */
+export function renderToolResult(data: unknown) {
+  const body = (data && typeof data === "object" ? data : {}) as JsonObject;
+  const record = (body.data && typeof body.data === "object" ? body.data : body) as JsonObject;
+  const images = Array.isArray(record.images) ? (record.images as RenderedImage[]) : [];
+  const summary = sanitizeFunnelJson({
+    ...record,
+    images: images.map(({ data_base64: _data, ...rest }) => rest),
+  }) as JsonObject;
+  const content: Array<Record<string, string>> = [{ text: JSON.stringify(summary), type: "text" }];
+  for (const image of images.slice(0, 16)) {
+    if (typeof image.data_base64 !== "string" || !/^image\/(png|jpeg)$/.test(String(image.mime_type))) continue;
+    content.push({ text: `Step ${String(image.step_key)} on ${String(image.device)}:`, type: "text" });
+    content.push({ data: image.data_base64, mimeType: String(image.mime_type), type: "image" });
+  }
+  return { content, isError: false, structuredContent: summary };
+}
+
 function saasFunnelsPublicValue(value: unknown): unknown {
   if (typeof value === "string") return saasFunnelsPublicText(value);
   if (Array.isArray(value)) return value.map(saasFunnelsPublicValue);
@@ -698,6 +721,8 @@ const hostedWorkspaceToolNames = new Set([
   "get_launch_checklist",
   "get_offer_catalog",
   "list_funnel_templates",
+  "render_funnel",
+  "render_funnel_step",
   "run_funnel_binding_test",
   "submit_funnel_entry_evidence",
   "update_funnel_draft",
@@ -1204,6 +1229,42 @@ export function saasFunnelsMcpToolDefinitions({
       },
       name: "get_funnel_design_reference",
       title: "Get Funnel Design Reference",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "See a Funnel draft's step as a customer would: an image drawn by the real renderer at desktop (1440×900), mobile (390×844) or both, with sample values. Pass variant_key for an A/B alternative. Use it after every design change to check how it looks.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          device: { enum: ["desktop", "mobile", "both"], type: "string" },
+          funnel_id: { type: "string" },
+          step_key: { type: "string" },
+          variant_key: { type: "string" },
+        },
+        required: ["funnel_id", "step_key"],
+        type: "object",
+      },
+      name: "render_funnel_step",
+      title: "Render Funnel Step",
+    },
+    {
+      annotations: readOnly,
+      description:
+        "See a whole Funnel draft at once: every step (up to 8) drawn by the real renderer, to check a journey in one call. Use render_funnel_step for full-size detail.",
+      inputSchema: {
+        additionalProperties: false,
+        properties: {
+          api_base_url: apiBaseUrlSchema,
+          device: { enum: ["desktop", "mobile"], type: "string" },
+          funnel_id: { type: "string" },
+        },
+        required: ["funnel_id"],
+        type: "object",
+      },
+      name: "render_funnel",
+      title: "Render Funnel",
     },
     {
       annotations: readOnly,
@@ -2106,6 +2167,33 @@ export async function callSaaSFunnelsMcpTool(
           options,
         ),
       );
+    }
+    if (name === "render_funnel_step" || name === "render_funnel") {
+      const funnelId = uuidArg(args, "funnel_id", true);
+      const query = new URLSearchParams();
+      const device = stringArg(args, "device");
+      if (device) {
+        if (!["desktop", "mobile", ...(name === "render_funnel_step" ? ["both"] : [])].includes(device))
+          throw new McpProtocolError(-32602, "device must be desktop, mobile or both.");
+        query.set("device", device);
+      }
+      if (name === "render_funnel_step") {
+        const stepKey = stringArg(args, "step_key");
+        if (!stepKey || !/^[a-z0-9_-]{1,80}$/i.test(stepKey))
+          throw new McpProtocolError(-32602, "step_key is required.");
+        query.set("step_key", stepKey);
+        const variantKey = stringArg(args, "variant_key");
+        if (variantKey) {
+          if (!/^[a-z0-9_-]{1,80}$/i.test(variantKey)) throw new McpProtocolError(-32602, "variant_key is invalid.");
+          query.set("variant_key", variantKey);
+        }
+      }
+      const data = await developerGet(
+        `/api/developer-tools/funnels/${encodeURIComponent(funnelId)}/render${query.size ? `?${query}` : ""}`,
+        args,
+        options,
+      );
+      return renderToolResult(data);
     }
     if (name === "get_funnel_design_reference") {
       const topic = stringArg(args, "topic");
